@@ -1,5 +1,8 @@
+use std::{f32::consts::E, mem};
+
 use pollster::FutureExt;
 use tracing::{error, info};
+use wgpu::util::DeviceExt;
 use winit::{
     error::EventLoopError,
     event::{Event, WindowEvent},
@@ -128,6 +131,50 @@ fn main() -> Result<(), EventLoopError> {
         }),
         multiview: None,
     });
+
+    let numbers: [u32; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    let size = mem::size_of_val(&numbers) as u64;
+    let buffer1 = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    let buffer2 = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    queue.write_buffer(&buffer1, 0, bytemuck::cast_slice(&numbers));
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    encoder.copy_buffer_to_buffer(&buffer1, 0, &buffer2, 0, size);
+
+    let command = encoder.finish();
+    queue.submit([command]);
+    let (sender, receiver) = futures_channel::oneshot::channel();
+
+    buffer2
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, |result| match result {
+            Ok(_) => {
+                let _ = sender.send(result);
+            }
+            Err(e) => error!("Error in buffer mapping: {e}"),
+        });
+
+    device.poll(wgpu::Maintain::Wait); //  poll in the background instead of blocking
+
+    receiver
+        .block_on()
+        .expect("communication failed")
+        .expect("buffer reading failed");
+    let slice: &[u8] = &buffer2.slice(..).get_mapped_range();
+    let slice: &[u32; 16] = bytemuck::from_bytes(slice);
+
+    println!("{slice:?}");
     event_loop.run(move |event, elwt| {
         match event {
             Event::WindowEvent {
