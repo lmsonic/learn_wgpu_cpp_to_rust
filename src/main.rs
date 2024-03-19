@@ -86,33 +86,55 @@ fn main() -> Result<(), EventLoopError> {
     info!("{config:?}");
     surface.configure(&device, &config);
 
-    let vertex_data: [f32; 12] = [
+    // let vertex_data: [f32; 30] = [
+    //     -0.5, -0.5, 1.0, 0.0, 0.0, 0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 0.5, 0.0, 0.0, 1.0, -0.55, -0.5,
+    //     1.0, 1.0, 0.0, -0.05, 0.5, 1.0, 0.0, 1.0, -0.55, 0.5, 0.0, 1.0, 1.0,
+    // ];
+    // let vertex_count = vertex_data.len() / 5;
+    // let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    //     label: Some("Vertex Buffer"),
+    //     contents: bytemuck::cast_slice(&vertex_data),
+    //     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
+    // });
+    let position_data: [f32; 12] = [
         -0.5, -0.5, 0.5, -0.5, 0.0, 0.5, -0.55, -0.5, -0.05, 0.5, -0.55, 0.5,
     ];
-    let vertex_count = vertex_data.len() / 2;
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Vertex Buffer"),
-        contents: bytemuck::cast_slice(&vertex_data),
+    let color_data: [f32; 18] = [
+        1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0,
+    ];
+    let vertex_count = position_data.len() / 2;
+    assert_eq!(vertex_count, color_data.len() / 3);
+
+    let position_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Position Buffer"),
+        contents: bytemuck::cast_slice(&position_data),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
+    });
+    let color_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Color Buffer"),
+        contents: bytemuck::cast_slice(&color_data),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
     });
 
     let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
-
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render Pipeline"),
         layout: None,
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: "vs_main",
-            buffers: &[wgpu::VertexBufferLayout {
-                array_stride: mem::size_of::<[f32; 2]>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &[wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: 0,
-                    shader_location: 0,
-                }],
-            }],
+            buffers: &[
+                wgpu::VertexBufferLayout {
+                    array_stride: mem::size_of::<[f32; 2]>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0=>Float32x2],
+                },
+                wgpu::VertexBufferLayout {
+                    array_stride: mem::size_of::<[f32; 3]>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![1=>Float32x3],
+                },
+            ],
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
@@ -184,9 +206,9 @@ fn main() -> Result<(), EventLoopError> {
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.9,
-                                    g: 0.1,
-                                    b: 0.2,
+                                    r: 0.05,
+                                    g: 0.05,
+                                    b: 0.05,
                                     a: 1.0,
                                 }),
                                 store: wgpu::StoreOp::Store,
@@ -197,7 +219,8 @@ fn main() -> Result<(), EventLoopError> {
                         occlusion_query_set: None,
                     });
                     render_pass.set_pipeline(&render_pipeline);
-                    render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    render_pass.set_vertex_buffer(0, position_buffer.slice(..));
+                    render_pass.set_vertex_buffer(1, color_buffer.slice(..));
                     render_pass.draw(0..vertex_count as u32, 0..1);
                 }
                 let command = encoder.finish();
