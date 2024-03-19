@@ -1,4 +1,4 @@
-use std::{f32::consts::E, mem};
+use std::mem;
 
 use pollster::FutureExt;
 use tracing::{error, info};
@@ -42,7 +42,7 @@ fn main() -> Result<(), EventLoopError> {
     let (device, queue) = adapter
         .request_device(
             &wgpu::DeviceDescriptor {
-                label: Some("My device"),
+                label: Some("Device"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::downlevel_defaults(),
             },
@@ -86,15 +86,33 @@ fn main() -> Result<(), EventLoopError> {
     info!("{config:?}");
     surface.configure(&device, &config);
 
+    let vertex_data: [f32; 12] = [
+        -0.5, -0.5, 0.5, -0.5, 0.0, 0.5, -0.55, -0.5, -0.05, 0.5, -0.55, 0.5,
+    ];
+    let vertex_count = vertex_data.len() / 2;
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Vertex Buffer"),
+        contents: bytemuck::cast_slice(&vertex_data),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
+    });
+
     let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: None,
+        label: Some("Render Pipeline"),
         layout: None,
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: "vs_main",
-            buffers: &[],
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: mem::size_of::<[f32; 2]>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: 0,
+                    shader_location: 0,
+                }],
+            }],
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
@@ -132,49 +150,6 @@ fn main() -> Result<(), EventLoopError> {
         multiview: None,
     });
 
-    let numbers: [u32; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-    let size = mem::size_of_val(&numbers) as u64;
-    let buffer1 = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-
-    let buffer2 = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-
-    queue.write_buffer(&buffer1, 0, bytemuck::cast_slice(&numbers));
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-    encoder.copy_buffer_to_buffer(&buffer1, 0, &buffer2, 0, size);
-
-    let command = encoder.finish();
-    queue.submit([command]);
-    let (sender, receiver) = futures_channel::oneshot::channel();
-
-    buffer2
-        .slice(..)
-        .map_async(wgpu::MapMode::Read, |result| match result {
-            Ok(_) => {
-                let _ = sender.send(result);
-            }
-            Err(e) => error!("Error in buffer mapping: {e}"),
-        });
-
-    device.poll(wgpu::Maintain::Wait); //  poll in the background instead of blocking
-
-    receiver
-        .block_on()
-        .expect("communication failed")
-        .expect("buffer reading failed");
-    let slice: &[u8] = &buffer2.slice(..).get_mapped_range();
-    let slice: &[u32; 16] = bytemuck::from_bytes(slice);
-
-    println!("{slice:?}");
     event_loop.run(move |event, elwt| {
         match event {
             Event::WindowEvent {
@@ -222,7 +197,8 @@ fn main() -> Result<(), EventLoopError> {
                         occlusion_query_set: None,
                     });
                     render_pass.set_pipeline(&render_pipeline);
-                    render_pass.draw(0..3, 0..1);
+                    render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    render_pass.draw(0..vertex_count as u32, 0..1);
                 }
                 let command = encoder.finish();
 
