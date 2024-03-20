@@ -1,4 +1,4 @@
-use std::mem;
+use std::{fs, mem, path::Path};
 
 use pollster::FutureExt;
 use tracing::{error, info};
@@ -86,27 +86,17 @@ fn main() -> Result<(), EventLoopError> {
     info!("{config:?}");
     surface.configure(&device, &config);
 
-    #[rustfmt::skip]
-    let vertex_data: [f32; 20] = [
-        // x,   y,     r,   g,   b
-        -0.5, -0.5,   1.0, 0.0, 0.0,
-        0.5, -0.5,   0.0, 1.0, 0.0,
-        0.5, 0.5,   0.0, 0.0, 1.0,
-        -0.5, 0.5,   1.0, 1.0, 0.0
-    ];
-    #[rustfmt::skip]
-    let index_data: [u16; 6] = [
-        0, 1, 2, // Triangle #0
-        0, 2, 3  // Triangle #1
-    ];
+    let (vertices, indices) = load_geometry("resources/webgpu.txt");
+    println!("{vertices:?}");
+    println!("{indices:?}");
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Vertex Buffer"),
-        contents: bytemuck::cast_slice(&vertex_data),
+        contents: bytemuck::cast_slice(&vertices),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
     });
     let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Index Buffer"),
-        contents: bytemuck::cast_slice(&index_data),
+        contents: bytemuck::cast_slice(&indices),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::INDEX,
     });
 
@@ -208,7 +198,7 @@ fn main() -> Result<(), EventLoopError> {
                     render_pass.set_pipeline(&render_pipeline);
                     render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                     render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                    render_pass.draw_indexed(0..index_data.len() as u32, 0, 0..1);
+                    render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
                 }
                 let command = encoder.finish();
 
@@ -229,4 +219,45 @@ fn main() -> Result<(), EventLoopError> {
             _ => (),
         }
     })
+}
+
+fn load_geometry(path: impl AsRef<Path>) -> (Vec<f32>, Vec<u16>) {
+    let file = fs::read_to_string(path).expect("File not found ");
+    let mut vertices = vec![];
+    let mut indices = vec![];
+    enum Section {
+        Points,
+        Indices,
+    }
+    let mut section = Section::Points;
+    for line in file.lines() {
+        if line == "[points]" {
+            section = Section::Points;
+            continue;
+        }
+        if line == "[indices]" {
+            section = Section::Indices;
+            continue;
+        }
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        match section {
+            Section::Points => {
+                let numbers = line
+                    .split_whitespace()
+                    .map(|n| n.parse::<f32>().unwrap())
+                    .collect::<Vec<_>>();
+                vertices.extend(numbers);
+            }
+            Section::Indices => {
+                let numbers = line
+                    .split_whitespace()
+                    .map(|n| n.parse::<u16>().unwrap())
+                    .collect::<Vec<_>>();
+                indices.extend(numbers);
+            }
+        }
+    }
+    (vertices, indices)
 }
