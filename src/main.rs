@@ -1,4 +1,4 @@
-use std::{fs, mem, path::Path};
+use std::{fs, mem, path::Path, time};
 
 use pollster::FutureExt;
 use tracing::{error, info};
@@ -99,11 +99,48 @@ fn main() -> Result<(), EventLoopError> {
         contents: bytemuck::cast_slice(&indices),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::INDEX,
     });
+    let start_time = time::Instant::now();
+    let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Uniform Buffer"),
+        contents: &bytemuck::cast::<f32, [u8; 4]>(start_time.elapsed().as_secs_f32()),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+    });
 
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Uniform Bind Group Layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Uniform Bind Group Layout"),
+
+        layout: &bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: &uniform_buffer,
+                offset: 0,
+                size: None,
+            }),
+        }],
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Render Pipeline Layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
     let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render Pipeline"),
-        layout: None,
+        layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: "vs_main",
@@ -198,9 +235,16 @@ fn main() -> Result<(), EventLoopError> {
                     render_pass.set_pipeline(&render_pipeline);
                     render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                     render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                    render_pass.set_bind_group(0, &bind_group, &[]);
                     render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
                 }
                 let command = encoder.finish();
+
+                queue.write_buffer(
+                    &uniform_buffer,
+                    0,
+                    &bytemuck::cast::<f32, [u8; 4]>(start_time.elapsed().as_secs_f32()),
+                );
 
                 queue.submit([command]);
 

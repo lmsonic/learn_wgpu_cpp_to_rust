@@ -8,11 +8,14 @@ struct VertexOutput {
     @location(0) color: vec3f,
 };
 
+@group(0) @binding(0) var<uniform> time : f32;
+
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     let ratio = 640.0 / 480.0; // The width and height of the target surface
-    let offset = vec2f(-0.6875, -0.463);
+    var offset = vec2f(-0.6875, -0.463);
+    offset += 0.3 * vec2f(cos(time), sin(time));
     out.position = vec4f(in.position.x + offset.x, (in.position.y + offset.y) * ratio, 0.0, 1.0);
     out.color = in.color; 
     return out;
