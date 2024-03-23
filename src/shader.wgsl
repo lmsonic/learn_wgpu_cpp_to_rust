@@ -8,14 +8,18 @@ struct VertexOutput {
     @location(0) color: vec3f,
 };
 
-@group(0) @binding(0) var<uniform> time : f32;
+struct Uniforms {
+    color: vec4f,
+    time: f32,
+};
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     let ratio = 640.0 / 480.0; // The width and height of the target surface
     var offset = vec2f(-0.6875, -0.463);
-    offset += 0.3 * vec2f(cos(time), sin(time));
+    offset += 0.3 * vec2f(cos(uniforms.time), sin(uniforms.time));
     out.position = vec4f(in.position.x + offset.x, (in.position.y + offset.y) * ratio, 0.0, 1.0);
     out.color = in.color; 
     return out;
@@ -23,6 +27,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-    let linear_color = pow(in.color, vec3f(2.2)); // Gamma correction
-    return vec4f(linear_color, 1.0);
+    let color = in.color * uniforms.color.rgb;
+    let linear_color = pow(color, vec3f(2.2)); // Gamma correction
+    return vec4f(linear_color, uniforms.color.a);
 }

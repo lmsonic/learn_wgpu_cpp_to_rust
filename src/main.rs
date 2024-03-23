@@ -99,10 +99,23 @@ fn main() -> Result<(), EventLoopError> {
         contents: bytemuck::cast_slice(&indices),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::INDEX,
     });
+
+    #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+    #[repr(C)]
+    struct Uniforms {
+        color: [f32; 4],
+        time: f32,
+        _padding: [f32; 3],
+    }
     let start_time = time::Instant::now();
+    let mut uniforms = Uniforms {
+        time: start_time.elapsed().as_secs_f32(),
+        color: [1.0, 1.0, 1.0, 1.0],
+        _padding: Default::default(),
+    };
     let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Uniform Buffer"),
-        contents: &bytemuck::cast::<f32, [u8; 4]>(start_time.elapsed().as_secs_f32()),
+        contents: bytemuck::cast_slice(&[uniforms]),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
     });
 
@@ -110,7 +123,7 @@ fn main() -> Result<(), EventLoopError> {
         label: Some("Uniform Bind Group Layout"),
         entries: &[wgpu::BindGroupLayoutEntry {
             binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
@@ -240,11 +253,9 @@ fn main() -> Result<(), EventLoopError> {
                 }
                 let command = encoder.finish();
 
-                queue.write_buffer(
-                    &uniform_buffer,
-                    0,
-                    &bytemuck::cast::<f32, [u8; 4]>(start_time.elapsed().as_secs_f32()),
-                );
+                uniforms.time = start_time.elapsed().as_secs_f32();
+                uniforms.color = [1.0, 0.5, 0.0, 1.0];
+                queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
                 queue.submit([command]);
 
