@@ -1,4 +1,4 @@
-use std::{fs, mem, num::NonZeroU64, path::Path, time};
+use std::{fs, mem, path::Path, time};
 
 use pollster::FutureExt;
 use tracing::{error, info};
@@ -14,14 +14,7 @@ fn main() -> Result<(), EventLoopError> {
     let event_loop = EventLoop::new().unwrap();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
 
-    // ControlFlow::Poll continuously runs the event loop, even if the OS hasn't
-    // dispatched any events. This is ideal for games and similar applications.
     event_loop.set_control_flow(ControlFlow::Poll);
-
-    // ControlFlow::Wait pauses the event loop if no events are available to process.
-    // This is ideal for non-game applications that only update in response to user
-    // input, and uses significantly less power/CPU time than ControlFlow::Poll.
-    // event_loop.set_control_flow(ControlFlow::Wait);
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
     info!("{instance:?}");
@@ -86,7 +79,7 @@ fn main() -> Result<(), EventLoopError> {
     info!("{config:?}");
     surface.configure(&device, &config);
 
-    let (vertices, indices) = load_geometry("resources/webgpu.txt");
+    let (vertices, indices) = load_geometry("resources/pyramid.txt");
     println!("{vertices:?}");
     println!("{indices:?}");
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -110,28 +103,13 @@ fn main() -> Result<(), EventLoopError> {
     let start_time = time::Instant::now();
     let mut uniforms = Uniforms {
         time: start_time.elapsed().as_secs_f32(),
-        color: [1.0, 1.0, 1.0, 1.0],
+        color: [0.0, 1.0, 0.4, 1.0],
         _padding: Default::default(),
     };
-    // let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-    //     label: Some("Uniform Buffer"),
-    //     contents: bytemuck::cast_slice(&[uniforms]),
-    //     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
-    // });
-    fn divide_and_ceil(value: usize, step: usize) -> usize {
-        let divide_and_ceil = value / step + if value % step == 0 { 0 } else { 1 };
-        step * divide_and_ceil
-    }
-    let size = mem::size_of::<Uniforms>();
-    let uniform_stride = divide_and_ceil(
-        size,
-        device.limits().min_uniform_buffer_offset_alignment as usize,
-    );
-    let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Uniform Buffer"),
+        contents: bytemuck::cast_slice(&[uniforms]),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
-        size: (uniform_stride + size) as u64,
-        mapped_at_creation: false,
     });
 
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -141,7 +119,7 @@ fn main() -> Result<(), EventLoopError> {
             visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: true,
+                has_dynamic_offset: false,
                 min_binding_size: None,
             },
             count: None,
@@ -156,7 +134,7 @@ fn main() -> Result<(), EventLoopError> {
             resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                 buffer: &uniform_buffer,
                 offset: 0,
-                size: Some(NonZeroU64::new(size as u64).unwrap()),
+                size: None,
             }),
         }],
     });
@@ -173,9 +151,9 @@ fn main() -> Result<(), EventLoopError> {
             module: &shader,
             entry_point: "vs_main",
             buffers: &[wgpu::VertexBufferLayout {
-                array_stride: mem::size_of::<[f32; 5]>() as u64,
+                array_stride: mem::size_of::<[f32; 6]>() as u64,
                 step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x3],
+                attributes: &wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3],
             }],
         },
         primitive: wgpu::PrimitiveState {
@@ -264,24 +242,11 @@ fn main() -> Result<(), EventLoopError> {
                     render_pass.set_pipeline(&render_pipeline);
                     render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                     render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                    render_pass.set_bind_group(0, &bind_group, &[]);
 
                     uniforms.time = start_time.elapsed().as_secs_f32();
-                    uniforms.color = [0.0, 1.0, 0.4, 1.0];
                     queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
-                    let mut dynamic_offset = 0;
-                    render_pass.set_bind_group(0, &bind_group, &[dynamic_offset]);
-                    render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
-
-                    uniforms.time -= 1.0;
-                    uniforms.color = [1.0, 1.0, 1.0, 0.7];
-                    queue.write_buffer(
-                        &uniform_buffer,
-                        uniform_stride as u64,
-                        bytemuck::cast_slice(&[uniforms]),
-                    );
-                    dynamic_offset = uniform_stride as u32;
-                    render_pass.set_bind_group(0, &bind_group, &[dynamic_offset]);
                     render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
                 }
 
