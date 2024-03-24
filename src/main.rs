@@ -77,7 +77,13 @@ fn main() -> Result<(), EventLoopError> {
     };
     info!("{config:?}");
     surface.configure(&device, &config);
-
+    #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+    #[repr(C)]
+    struct VertexAttribute {
+        position: Vec3,
+        normal: Vec3,
+        color: Vec3,
+    }
     let (vertices, indices) = load_geometry("resources/pyramid.txt");
     println!("{vertices:?}");
     println!("{indices:?}");
@@ -206,9 +212,9 @@ fn main() -> Result<(), EventLoopError> {
             module: &shader,
             entry_point: "vs_main",
             buffers: &[wgpu::VertexBufferLayout {
-                array_stride: mem::size_of::<[f32; 6]>() as u64,
+                array_stride: mem::size_of::<VertexAttribute>() as u64,
                 step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3],
+                attributes: &wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3,2=>Float32x3],
             }],
         },
         primitive: wgpu::PrimitiveState {
