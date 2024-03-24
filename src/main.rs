@@ -1,4 +1,4 @@
-use std::{f32::consts::PI, fs, mem, path::Path, time};
+use std::{f32::consts::PI, fmt::Debug, fs, mem, path::Path, time};
 
 use glam::{Mat4, Vec3, Vec4};
 use pollster::FutureExt;
@@ -77,26 +77,18 @@ fn main() -> Result<(), EventLoopError> {
     };
     info!("{config:?}");
     surface.configure(&device, &config);
-    #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-    #[repr(C)]
-    struct VertexAttribute {
-        position: Vec3,
-        normal: Vec3,
-        color: Vec3,
-    }
-    let (vertices, indices) = load_geometry("resources/pyramid.txt");
-    println!("{vertices:?}");
-    println!("{indices:?}");
+    let vertices = load_geometry("resources/mammoth.obj");
+
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Vertex Buffer"),
         contents: bytemuck::cast_slice(&vertices),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
     });
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Index Buffer"),
-        contents: bytemuck::cast_slice(&indices),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::INDEX,
-    });
+    // let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    //     label: Some("Index Buffer"),
+    //     contents: bytemuck::cast_slice(&indices),
+    //     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::INDEX,
+    // });
 
     #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
     #[repr(C)]
@@ -111,14 +103,14 @@ fn main() -> Result<(), EventLoopError> {
     let start_time = time::Instant::now();
 
     let model_scale = Mat4::from_scale(Vec3::splat(0.3));
-    let model_translation = Mat4::from_translation(Vec3::new(0.5, 0.0, 0.0));
+    let model_translation = Mat4::from_translation(Vec3::splat(0.0));
     let angle1 = start_time.elapsed().as_secs_f32();
     let model_rotation = Mat4::from_rotation_z(angle1);
     let model = model_rotation * model_translation * model_scale;
 
     // Translate the view
-    let focal_point = Vec3::new(0.0, 0.0, -2.0);
-    let view_translation = Mat4::from_translation(-focal_point);
+    let camera_position = Vec3::new(0.0, 0.0, -1.0);
+    let view_translation = Mat4::from_translation(-camera_position);
 
     // Rotate the view point
     let angle2 = 3.0 * PI / 4.0;
@@ -315,7 +307,7 @@ fn main() -> Result<(), EventLoopError> {
 
                     render_pass.set_pipeline(&render_pipeline);
                     render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                    // render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.set_bind_group(0, &bind_group, &[]);
 
                     let angle1 = start_time.elapsed().as_secs_f32();
@@ -323,7 +315,7 @@ fn main() -> Result<(), EventLoopError> {
                     uniforms.model = model_rotation * model_translation * model_scale;
                     queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
-                    render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+                    render_pass.draw(0..vertices.len() as u32, 0..1);
                 }
 
                 let command = encoder.finish();
@@ -347,43 +339,46 @@ fn main() -> Result<(), EventLoopError> {
     })
 }
 
-fn load_geometry(path: impl AsRef<Path>) -> (Vec<f32>, Vec<u16>) {
-    let file = fs::read_to_string(path).expect("File not found ");
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct VertexAttribute {
+    position: Vec3,
+    normal: Vec3,
+    color: Vec3,
+}
+fn load_geometry(path: impl AsRef<Path> + Debug) -> Vec<VertexAttribute> {
+    let (models, _) = tobj::load_obj(
+        path,
+        &tobj::LoadOptions {
+            single_index: true,
+            triangulate: true,
+            ignore_points: true,
+            ignore_lines: true,
+        },
+    )
+    .expect("Failed to OBJ load file");
     let mut vertices = vec![];
-    let mut indices = vec![];
-    enum Section {
-        Points,
-        Indices,
-    }
-    let mut section = Section::Points;
-    for line in file.lines() {
-        if line == "[points]" {
-            section = Section::Points;
-            continue;
-        }
-        if line == "[indices]" {
-            section = Section::Indices;
-            continue;
-        }
-        if line.starts_with('#') || line.is_empty() {
-            continue;
-        }
-        match section {
-            Section::Points => {
-                let numbers = line
-                    .split_whitespace()
-                    .map(|n| n.parse::<f32>().unwrap())
-                    .collect::<Vec<_>>();
-                vertices.extend(numbers);
-            }
-            Section::Indices => {
-                let numbers = line
-                    .split_whitespace()
-                    .map(|n| n.parse::<u16>().unwrap())
-                    .collect::<Vec<_>>();
-                indices.extend(numbers);
-            }
+    for model in &models {
+        let mesh = &model.mesh;
+        vertices.reserve(mesh.indices.len());
+        for index in &mesh.indices {
+            let i = *index as usize;
+            vertices.push(VertexAttribute {
+                position: Vec3::new(
+                    mesh.positions[i * 3],
+                    // Z is up
+                    -mesh.positions[i * 3 + 2],
+                    mesh.positions[i * 3 + 1],
+                ),
+                normal: Vec3::new(
+                    mesh.normals[i * 3],
+                    // Z is up
+                    -mesh.normals[i * 3 + 2],
+                    mesh.normals[i * 3 + 1],
+                ),
+                color: Vec3::splat(1.0),
+            });
         }
     }
-    (vertices, indices)
+    vertices
 }
