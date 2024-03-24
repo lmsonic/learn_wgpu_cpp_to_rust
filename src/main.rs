@@ -1,5 +1,6 @@
-use std::{fs, mem, path::Path, time};
+use std::{f32::consts::PI, fs, mem, path::Path, time};
 
+use glam::{Mat4, Vec3, Vec4};
 use pollster::FutureExt;
 use tracing::{error, info};
 use wgpu::util::DeviceExt;
@@ -29,8 +30,6 @@ fn main() -> Result<(), EventLoopError> {
         .block_on()
         .unwrap();
     info!("{adapter:?}");
-
-    info!("{:?}", adapter.features());
 
     let (device, queue) = adapter
         .request_device(
@@ -96,14 +95,43 @@ fn main() -> Result<(), EventLoopError> {
     #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
     #[repr(C)]
     struct Uniforms {
-        color: [f32; 4],
+        model: Mat4,
+        view: Mat4,
+        projection: Mat4,
+        color: Vec4,
         time: f32,
         _padding: [f32; 3],
     }
     let start_time = time::Instant::now();
+
+    let model_scale = Mat4::from_scale(Vec3::splat(0.3));
+    let model_translation = Mat4::from_translation(Vec3::new(0.5, 0.0, 0.0));
+    let angle1 = start_time.elapsed().as_secs_f32();
+    let model_rotation = Mat4::from_rotation_z(angle1);
+    let model = model_rotation * model_translation * model_scale;
+
+    // Translate the view
+    let focal_point = Vec3::new(0.0, 0.0, -2.0);
+    let view_translation = Mat4::from_translation(-focal_point);
+
+    // Rotate the view point
+    let angle2 = 3.0 * PI / 4.0;
+    let view_rotation = Mat4::from_rotation_x(-angle2);
+    let view = view_translation * view_rotation;
+
+    let ratio = window.inner_size().width as f32 / window.inner_size().height as f32;
+    let fov = 45.0;
+    let near = 0.01;
+    let far = 100.0;
+    #[rustfmt::skip]
+    let projection = Mat4::perspective_lh(f32::to_radians(fov),ratio, near, far);
+
     let mut uniforms = Uniforms {
+        model,
+        view,
+        projection,
+        color: Vec4::new(0.0, 1.0, 0.4, 1.0),
         time: start_time.elapsed().as_secs_f32(),
-        color: [0.0, 1.0, 0.4, 1.0],
         _padding: Default::default(),
     };
     let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -284,7 +312,9 @@ fn main() -> Result<(), EventLoopError> {
                     render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
                     render_pass.set_bind_group(0, &bind_group, &[]);
 
-                    uniforms.time = start_time.elapsed().as_secs_f32();
+                    let angle1 = start_time.elapsed().as_secs_f32();
+                    let model_rotation = Mat4::from_rotation_z(angle1);
+                    uniforms.model = model_rotation * model_translation * model_scale;
                     queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
                     render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
