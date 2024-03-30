@@ -1,6 +1,6 @@
 use std::{f32::consts::PI, fmt::Debug, mem, path::Path, time};
 
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use pollster::FutureExt;
 use tracing::{error, info};
 use wgpu::util::DeviceExt;
@@ -77,7 +77,7 @@ fn main() -> Result<(), EventLoopError> {
     };
     info!("{config:?}");
     surface.configure(&device, &config);
-    let vertices = load_geometry("resources/plane.obj");
+    let vertices = load_geometry("resources/cube.obj");
 
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Vertex Buffer"),
@@ -104,8 +104,13 @@ fn main() -> Result<(), EventLoopError> {
 
     let mut uniforms = Uniforms {
         model: Mat4::IDENTITY,
-        view: Mat4::from_scale(Vec3::splat(1.0)),
-        projection: Mat4::orthographic_lh(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+        view: Mat4::look_at_lh(Vec3::new(-0.5, -2.5, 2.0), Vec3::ZERO, Vec3::Z),
+        projection: Mat4::perspective_lh(
+            f32::to_radians(45.0),
+            window.inner_size().width as f32 / window.inner_size().height as f32,
+            0.01,
+            100.0,
+        ),
         color: Vec4::new(0.0, 1.0, 0.4, 1.0),
         time: start_time.elapsed().as_secs_f32(),
         _padding: Default::default(),
@@ -176,33 +181,22 @@ fn main() -> Result<(), EventLoopError> {
         }
     }
 
-    let texture = device.create_texture_with_data(
-        &queue,
-        &texture_descriptor,
-        wgpu::util::TextureDataOrder::LayerMajor,
+    let texture = device.create_texture(&texture_descriptor);
+    queue.write_texture(
+        wgpu::ImageCopyTextureBase {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
         &pixels,
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * texture_descriptor.size.width),
+            rows_per_image: Some(texture_descriptor.size.height),
+        },
+        texture_descriptor.size,
     );
-    // let texture = device.create_texture(&texture_descriptor);
-    // queue.write_texture(
-    //     wgpu::ImageCopyTextureBase {
-    //         texture: &texture,
-    //         mip_level: 0,
-    //         origin: wgpu::Origin3d::ZERO,
-    //         aspect: wgpu::TextureAspect::All,
-    //     },
-    //     &pixels,
-    //     wgpu::ImageDataLayout {
-    //         offset: 0,
-    //         bytes_per_row: Some(4 * texture_descriptor.size.width),
-    //         rows_per_image: Some(texture_descriptor.size.height),
-    //     },
-    //     wgpu::Extent3d {
-    //         width: texture_descriptor.size.width,
-    //         height: texture_descriptor.size.height,
-    //         depth_or_array_layers: 1,
-    //     },
-    // );
-
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Uniform Bind Group Layout"),
         entries: &[
@@ -273,7 +267,7 @@ fn main() -> Result<(), EventLoopError> {
             buffers: &[wgpu::VertexBufferLayout {
                 array_stride: mem::size_of::<VertexAttribute>() as u64,
                 step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3,2=>Float32x3],
+                attributes: &wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3,2=>Float32x3,3=>Float32x2],
             }],
         },
         primitive: wgpu::PrimitiveState {
@@ -407,6 +401,7 @@ struct VertexAttribute {
     position: Vec3,
     normal: Vec3,
     color: Vec3,
+    uv: Vec2,
 }
 fn load_geometry(path: impl AsRef<Path> + Debug) -> Vec<VertexAttribute> {
     let (models, _) = tobj::load_obj(
@@ -432,13 +427,34 @@ fn load_geometry(path: impl AsRef<Path> + Debug) -> Vec<VertexAttribute> {
                     -mesh.positions[i * 3 + 2],
                     mesh.positions[i * 3 + 1],
                 ),
-                normal: Vec3::new(
-                    mesh.normals[i * 3],
-                    // Z is up
-                    -mesh.normals[i * 3 + 2],
-                    mesh.normals[i * 3 + 1],
-                ),
-                color: Vec3::splat(1.0),
+                normal: if mesh.normals.is_empty() {
+                    Vec3::ZERO
+                } else {
+                    Vec3::new(
+                        mesh.normals[i * 3],
+                        // Z is up
+                        -mesh.normals[i * 3 + 2],
+                        mesh.normals[i * 3 + 1],
+                    )
+                },
+                color: if mesh.vertex_color.is_empty() {
+                    Vec3::ONE
+                } else {
+                    Vec3::new(
+                        mesh.vertex_color[i * 3],
+                        -mesh.vertex_color[i * 3 + 2],
+                        mesh.vertex_color[i * 3 + 1],
+                    )
+                },
+                uv: if mesh.texcoords.is_empty() {
+                    Vec2::ZERO
+                } else {
+                    Vec2::new(
+                        mesh.texcoords[i * 2],
+                        // Modern graphics APIs use a different UV coordinate system than the OBJ file format.
+                        1.0 - mesh.texcoords[i * 2 + 1],
+                    )
+                },
             });
         }
     }
