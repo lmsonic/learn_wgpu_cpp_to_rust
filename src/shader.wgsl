@@ -18,7 +18,7 @@ struct Uniforms {
     time: f32,
 };
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
-
+@group(0) @binding(1) var gradient_texture: texture_2d<f32>;
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
@@ -41,9 +41,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let light_color1 = vec3f(1.0, 0.9, 0.6);
     let light_color2 = vec3f(0.6, 0.9, 1.0);
     let shading = light_color1 * shading1 + light_color2 * shading2;
-    let color = in.color * shading;
+    // let color = in.color * shading;
 
-    
+    let color = textureLoad(gradient_texture,vec2i(in.position.xy),0).rgb;
     let linear_color = pow(color, vec3f(2.2)); // Gamma correction
     return vec4f(linear_color, uniforms.color.a);
 }

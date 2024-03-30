@@ -1,4 +1,4 @@
-use std::{f32::consts::PI, fmt::Debug, fs, mem, path::Path, time};
+use std::{f32::consts::PI, fmt::Debug, mem, path::Path, time};
 
 use glam::{Mat4, Vec3, Vec4};
 use pollster::FutureExt;
@@ -77,7 +77,7 @@ fn main() -> Result<(), EventLoopError> {
     };
     info!("{config:?}");
     surface.configure(&device, &config);
-    let vertices = load_geometry("resources/mammoth.obj");
+    let vertices = load_geometry("resources/plane.obj");
 
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Vertex Buffer"),
@@ -102,32 +102,10 @@ fn main() -> Result<(), EventLoopError> {
     }
     let start_time = time::Instant::now();
 
-    let model_scale = Mat4::from_scale(Vec3::splat(0.3));
-    let model_translation = Mat4::from_translation(Vec3::splat(0.0));
-    let angle1 = start_time.elapsed().as_secs_f32();
-    let model_rotation = Mat4::from_rotation_z(angle1);
-    let model = model_rotation * model_translation * model_scale;
-
-    // Translate the view
-    let camera_position = Vec3::new(0.0, 0.0, -1.0);
-    let view_translation = Mat4::from_translation(-camera_position);
-
-    // Rotate the view point
-    let angle2 = 3.0 * PI / 4.0;
-    let view_rotation = Mat4::from_rotation_x(-angle2);
-    let view = view_translation * view_rotation;
-
-    let ratio = window.inner_size().width as f32 / window.inner_size().height as f32;
-    let fov = 45.0;
-    let near = 0.01;
-    let far = 100.0;
-    #[rustfmt::skip]
-    let projection = Mat4::perspective_lh(f32::to_radians(fov),ratio, near, far);
-
     let mut uniforms = Uniforms {
-        model,
-        view,
-        projection,
+        model: Mat4::IDENTITY,
+        view: Mat4::from_scale(Vec3::splat(1.0)),
+        projection: Mat4::orthographic_lh(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
         color: Vec4::new(0.0, 1.0, 0.4, 1.0),
         time: start_time.elapsed().as_secs_f32(),
         _padding: Default::default(),
@@ -138,37 +116,6 @@ fn main() -> Result<(), EventLoopError> {
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
     });
 
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Uniform Bind Group Layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }],
-    });
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Uniform Bind Group Layout"),
-
-        layout: &bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                buffer: &uniform_buffer,
-                offset: 0,
-                size: None,
-            }),
-        }],
-    });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Render Pipeline Layout"),
-        bind_group_layouts: &[&bind_group_layout],
-        push_constant_ranges: &[],
-    });
     let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
     let depth_texture_format = wgpu::TextureFormat::Depth24Plus;
@@ -197,6 +144,126 @@ fn main() -> Result<(), EventLoopError> {
         array_layer_count: Some(1),
     });
 
+    let texture_descriptor = wgpu::TextureDescriptor {
+        label: Some("Texture example"),
+        size: wgpu::Extent3d {
+            width: 256,
+            height: 256,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    };
+    let mut pixels: Vec<u8> = Vec::with_capacity(
+        (4 * texture_descriptor.size.width * texture_descriptor.size.height) as usize,
+    );
+    for i in 0..texture_descriptor.size.width {
+        for j in 0..texture_descriptor.size.height {
+            let r = if (i / 16) % 2 == (j / 16) % 2 { 255 } else { 0 };
+            let g = if ((i.overflowing_sub(j)).0 / 16) % 2 == 0 {
+                255
+            } else {
+                0
+            };
+            let b = if ((i + j) / 16) % 2 == 0 { 255 } else { 0 };
+            let a = 255;
+            // pixels.extend([i as u8, j as u8, 128, 255])
+            pixels.extend([r, g, b, a])
+        }
+    }
+
+    let texture = device.create_texture_with_data(
+        &queue,
+        &texture_descriptor,
+        wgpu::util::TextureDataOrder::LayerMajor,
+        &pixels,
+    );
+    // let texture = device.create_texture(&texture_descriptor);
+    // queue.write_texture(
+    //     wgpu::ImageCopyTextureBase {
+    //         texture: &texture,
+    //         mip_level: 0,
+    //         origin: wgpu::Origin3d::ZERO,
+    //         aspect: wgpu::TextureAspect::All,
+    //     },
+    //     &pixels,
+    //     wgpu::ImageDataLayout {
+    //         offset: 0,
+    //         bytes_per_row: Some(4 * texture_descriptor.size.width),
+    //         rows_per_image: Some(texture_descriptor.size.height),
+    //     },
+    //     wgpu::Extent3d {
+    //         width: texture_descriptor.size.width,
+    //         height: texture_descriptor.size.height,
+    //         depth_or_array_layers: 1,
+    //     },
+    // );
+
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Uniform Bind Group Layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let texture_view = texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("Texture View"),
+        format: Some(texture_descriptor.format),
+        dimension: Some(wgpu::TextureViewDimension::D2),
+        aspect: wgpu::TextureAspect::All,
+        base_mip_level: 0,
+        mip_level_count: Some(1),
+        base_array_layer: 0,
+        array_layer_count: Some(1),
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Uniform Bind Group Layout"),
+
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &uniform_buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&texture_view),
+            },
+        ],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Render Pipeline Layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render Pipeline"),
         layout: Some(&pipeline_layout),
@@ -309,11 +376,6 @@ fn main() -> Result<(), EventLoopError> {
                     render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                     // render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.set_bind_group(0, &bind_group, &[]);
-
-                    let angle1 = start_time.elapsed().as_secs_f32();
-                    let model_rotation = Mat4::from_rotation_z(angle1);
-                    uniforms.model = model_rotation * model_translation * model_scale;
-                    queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
                     render_pass.draw(0..vertices.len() as u32, 0..1);
                 }
