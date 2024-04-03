@@ -1,4 +1,11 @@
-use std::{f32::consts::PI, fmt::Debug, mem, path::Path, time};
+use glam::{vec3, FloatExt};
+use std::{
+    f32::consts::{PI, TAU},
+    fmt::Debug,
+    mem,
+    path::Path,
+    time,
+};
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use pollster::FutureExt;
@@ -77,7 +84,7 @@ fn main() -> Result<(), EventLoopError> {
     };
     info!("{config:?}");
     surface.configure(&device, &config);
-    let vertices = load_geometry("resources/cube.obj");
+    let vertices = load_geometry("resources/plane.obj");
 
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Vertex Buffer"),
@@ -150,53 +157,96 @@ fn main() -> Result<(), EventLoopError> {
     });
 
     let texture_descriptor = wgpu::TextureDescriptor {
-        label: Some("Texture example"),
+        label: Some("Texture"),
         size: wgpu::Extent3d {
             width: 256,
             height: 256,
             depth_or_array_layers: 1,
         },
-        mip_level_count: 1,
+        mip_level_count: 8,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     };
-    let mut pixels: Vec<u8> = Vec::with_capacity(
-        (4 * texture_descriptor.size.width * texture_descriptor.size.height) as usize,
-    );
-    for i in 0..texture_descriptor.size.width {
-        for j in 0..texture_descriptor.size.height {
-            let r = if (i / 16) % 2 == (j / 16) % 2 { 255 } else { 0 };
-            let g = if ((i.overflowing_sub(j)).0 / 16) % 2 == 0 {
-                255
-            } else {
-                0
-            };
-            let b = if ((i + j) / 16) % 2 == 0 { 255 } else { 0 };
-            let a = 255;
-            // pixels.extend([i as u8, j as u8, 128, 255])
-            pixels.extend([r, g, b, a])
-        }
-    }
 
     let texture = device.create_texture(&texture_descriptor);
-    queue.write_texture(
-        wgpu::ImageCopyTextureBase {
+
+    let mut mip_level_size = texture_descriptor.size;
+    let mut previous_level_pixels = vec![];
+    for level in 0..texture_descriptor.mip_level_count {
+        let mut pixels: Vec<u8> =
+            Vec::with_capacity((4 * mip_level_size.width * mip_level_size.height) as usize);
+        for i in 0..mip_level_size.width {
+            for j in 0..mip_level_size.height {
+                let (r, g, b) = if level == 0 {
+                    // Pixel color calculation
+                    let r = if (i / 16) % 2 == (j / 16) % 2 { 255 } else { 0 };
+                    let g = if (i.wrapping_sub(j) / 16) % 2 == 0 {
+                        255
+                    } else {
+                        0
+                    };
+                    let b = if ((i + j) / 16) % 2 == 0 { 255 } else { 0 };
+                    (r, g, b)
+                } else {
+                    // Get the corresponding 4 pixels from the previous level
+
+                    let width = mip_level_size.width as usize;
+                    let mip_level_index = 2 * width;
+                    let height_index = 2 * j as usize;
+                    let width_index = 2 * i as usize;
+                    let i00 = 4 * (mip_level_index * height_index + width_index);
+                    let i01 = 4 * (mip_level_index * height_index + (width_index + 1));
+                    let i10 = 4 * (mip_level_index * (height_index + 1) + width_index);
+                    let i11 = 4 * (mip_level_index * (height_index + 1) + (width_index + 1));
+
+                    let p00: &[u8] = &previous_level_pixels[i00..(i00 + 4)];
+                    let p01 = &previous_level_pixels[i01..(i01 + 4)];
+                    let p10 = &previous_level_pixels[i10..(i10 + 4)];
+                    let p11 = &previous_level_pixels[i11..(i11 + 4)];
+                    // Average
+                    let r = (p00[0] as u32 + p01[0] as u32 + p10[0] as u32 + p11[0] as u32) / 4;
+                    let g = (p00[1] as u32 + p01[1] as u32 + p10[1] as u32 + p11[1] as u32) / 4;
+                    let b = (p00[2] as u32 + p01[2] as u32 + p10[2] as u32 + p11[2] as u32) / 4;
+                    (r as u8, g as u8, b as u8)
+                };
+                let a = 255;
+                pixels.extend([r, g, b, a])
+            }
+        }
+        let destination = wgpu::ImageCopyTextureBase {
             texture: &texture,
-            mip_level: 0,
+            mip_level: level,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
-        },
-        &pixels,
-        wgpu::ImageDataLayout {
+        };
+        let source = wgpu::ImageDataLayout {
             offset: 0,
-            bytes_per_row: Some(4 * texture_descriptor.size.width),
-            rows_per_image: Some(texture_descriptor.size.height),
-        },
-        texture_descriptor.size,
-    );
+            bytes_per_row: Some(4 * mip_level_size.width),
+            rows_per_image: Some(mip_level_size.height),
+        };
+        queue.write_texture(destination, &pixels, source, mip_level_size);
+        mip_level_size.width /= 2;
+        mip_level_size.height /= 2;
+        previous_level_pixels = pixels;
+    }
+
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("Texture"),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Linear,
+        lod_min_clamp: 0.0,
+        lod_max_clamp: 8.0,
+        compare: None,
+        anisotropy_clamp: 1,
+        border_color: None,
+    });
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Uniform Bind Group Layout"),
         entries: &[
@@ -220,6 +270,12 @@ fn main() -> Result<(), EventLoopError> {
                 },
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
         ],
     });
 
@@ -229,7 +285,7 @@ fn main() -> Result<(), EventLoopError> {
         dimension: Some(wgpu::TextureViewDimension::D2),
         aspect: wgpu::TextureAspect::All,
         base_mip_level: 0,
-        mip_level_count: Some(1),
+        mip_level_count: Some(texture_descriptor.mip_level_count),
         base_array_layer: 0,
         array_layer_count: Some(1),
     });
@@ -249,6 +305,10 @@ fn main() -> Result<(), EventLoopError> {
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: wgpu::BindingResource::TextureView(&texture_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&sampler),
             },
         ],
     });
@@ -370,6 +430,13 @@ fn main() -> Result<(), EventLoopError> {
                     render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                     // render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.set_bind_group(0, &bind_group, &[]);
+
+                    uniforms.time = start_time.elapsed().as_secs_f32();
+                    let view_z =
+                        f32::lerp(0.0, 0.25, f32::cos(PI * 0.5 * uniforms.time) * 0.5 + 0.5);
+                    uniforms.view =
+                        Mat4::look_at_lh(vec3(-0.5, -1.5, view_z + 0.25), Vec3::ZERO, Vec3::Z);
+                    queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
                     render_pass.draw(0..vertices.len() as u32, 0..1);
                 }
