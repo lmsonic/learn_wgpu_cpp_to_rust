@@ -1,4 +1,5 @@
 use glam::{vec3, FloatExt};
+use image::DynamicImage;
 use std::{
     f32::consts::{PI, TAU},
     fmt::Debug,
@@ -84,7 +85,7 @@ fn main() -> Result<(), EventLoopError> {
     };
     info!("{config:?}");
     surface.configure(&device, &config);
-    let vertices = load_geometry("resources/plane.obj");
+    let vertices = load_geometry("resources/fourareen/fourareen.obj");
 
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Vertex Buffer"),
@@ -111,7 +112,7 @@ fn main() -> Result<(), EventLoopError> {
 
     let mut uniforms = Uniforms {
         model: Mat4::IDENTITY,
-        view: Mat4::look_at_lh(Vec3::new(-0.5, -2.5, 2.0), Vec3::ZERO, Vec3::Z),
+        view: Mat4::look_at_lh(Vec3::new(-2.0, -3.0, 2.0), Vec3::ZERO, Vec3::Z),
         projection: Mat4::perspective_lh(
             f32::to_radians(45.0),
             window.inner_size().width as f32 / window.inner_size().height as f32,
@@ -156,82 +157,12 @@ fn main() -> Result<(), EventLoopError> {
         array_layer_count: Some(1),
     });
 
-    let texture_descriptor = wgpu::TextureDescriptor {
-        label: Some("Texture"),
-        size: wgpu::Extent3d {
-            width: 256,
-            height: 256,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 8,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    };
-
-    let texture = device.create_texture(&texture_descriptor);
-
-    let mut mip_level_size = texture_descriptor.size;
-    let mut previous_level_pixels = vec![];
-    for level in 0..texture_descriptor.mip_level_count {
-        let mut pixels: Vec<u8> =
-            Vec::with_capacity((4 * mip_level_size.width * mip_level_size.height) as usize);
-        for i in 0..mip_level_size.width {
-            for j in 0..mip_level_size.height {
-                let (r, g, b) = if level == 0 {
-                    // Pixel color calculation
-                    let r = if (i / 16) % 2 == (j / 16) % 2 { 255 } else { 0 };
-                    let g = if (i.wrapping_sub(j) / 16) % 2 == 0 {
-                        255
-                    } else {
-                        0
-                    };
-                    let b = if ((i + j) / 16) % 2 == 0 { 255 } else { 0 };
-                    (r, g, b)
-                } else {
-                    // Get the corresponding 4 pixels from the previous level
-
-                    let width = mip_level_size.width as usize;
-                    let mip_level_index = 2 * width;
-                    let height_index = 2 * j as usize;
-                    let width_index = 2 * i as usize;
-                    let i00 = 4 * (mip_level_index * height_index + width_index);
-                    let i01 = 4 * (mip_level_index * height_index + (width_index + 1));
-                    let i10 = 4 * (mip_level_index * (height_index + 1) + width_index);
-                    let i11 = 4 * (mip_level_index * (height_index + 1) + (width_index + 1));
-
-                    let p00: &[u8] = &previous_level_pixels[i00..(i00 + 4)];
-                    let p01 = &previous_level_pixels[i01..(i01 + 4)];
-                    let p10 = &previous_level_pixels[i10..(i10 + 4)];
-                    let p11 = &previous_level_pixels[i11..(i11 + 4)];
-                    // Average
-                    let r = (p00[0] as u32 + p01[0] as u32 + p10[0] as u32 + p11[0] as u32) / 4;
-                    let g = (p00[1] as u32 + p01[1] as u32 + p10[1] as u32 + p11[1] as u32) / 4;
-                    let b = (p00[2] as u32 + p01[2] as u32 + p10[2] as u32 + p11[2] as u32) / 4;
-                    (r as u8, g as u8, b as u8)
-                };
-                let a = 255;
-                pixels.extend([r, g, b, a])
-            }
-        }
-        let destination = wgpu::ImageCopyTextureBase {
-            texture: &texture,
-            mip_level: level,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        };
-        let source = wgpu::ImageDataLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * mip_level_size.width),
-            rows_per_image: Some(mip_level_size.height),
-        };
-        queue.write_texture(destination, &pixels, source, mip_level_size);
-        mip_level_size.width /= 2;
-        mip_level_size.height /= 2;
-        previous_level_pixels = pixels;
-    }
+    let (texture, texture_view) = load_texture(
+        "resources/fourareen/fourareen2K_albedo.jpg",
+        &device,
+        &queue,
+    )
+    .unwrap();
 
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("Texture"),
@@ -279,16 +210,6 @@ fn main() -> Result<(), EventLoopError> {
         ],
     });
 
-    let texture_view = texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some("Texture View"),
-        format: Some(texture_descriptor.format),
-        dimension: Some(wgpu::TextureViewDimension::D2),
-        aspect: wgpu::TextureAspect::All,
-        base_mip_level: 0,
-        mip_level_count: Some(texture_descriptor.mip_level_count),
-        base_array_layer: 0,
-        array_layer_count: Some(1),
-    });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Uniform Bind Group Layout"),
 
@@ -431,12 +352,9 @@ fn main() -> Result<(), EventLoopError> {
                     // render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.set_bind_group(0, &bind_group, &[]);
 
-                    uniforms.time = start_time.elapsed().as_secs_f32();
-                    let view_z =
-                        f32::lerp(0.0, 0.25, f32::cos(PI * 0.5 * uniforms.time) * 0.5 + 0.5);
-                    uniforms.view =
-                        Mat4::look_at_lh(vec3(-0.5, -1.5, view_z + 0.25), Vec3::ZERO, Vec3::Z);
-                    queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+                    // uniforms.time = start_time.elapsed().as_secs_f32();
+
+                    // queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
                     render_pass.draw(0..vertices.len() as u32, 0..1);
                 }
@@ -461,7 +379,106 @@ fn main() -> Result<(), EventLoopError> {
         }
     })
 }
+fn bit_width(x: u32) -> u32 {
+    if x == 0 {
+        0
+    } else {
+        1 + x.ilog2()
+    }
+}
+fn load_texture(
+    path: impl AsRef<Path>,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> image::ImageResult<(wgpu::Texture, wgpu::TextureView)> {
+    let image = image::open(&path)?;
+    let label = path.as_ref().to_str();
+    let texture_label = label.map(|label| format!("{label} Texture"));
+    let mip_level_count = bit_width(u32::max(image.width(), image.height()));
+    let texture_descriptor = wgpu::TextureDescriptor {
+        label: texture_label.as_deref(),
+        size: wgpu::Extent3d {
+            width: image.width(),
+            height: image.height(),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    };
+    let view_label = label.map(|label| format!("{label} Texture View"));
+    let texture = device.create_texture(&texture_descriptor);
+    write_mipmaps(queue, &texture, image);
+    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        label: view_label.as_deref(),
+        format: Some(texture.format()),
+        dimension: Some(wgpu::TextureViewDimension::D2),
+        aspect: wgpu::TextureAspect::All,
+        base_mip_level: 0,
+        mip_level_count: Some(1),
+        base_array_layer: 0,
+        array_layer_count: Some(1),
+    });
+    Ok((texture, view))
+}
 
+fn write_mipmaps(queue: &wgpu::Queue, texture: &wgpu::Texture, image: DynamicImage) {
+    let data = image.into_rgba8().into_raw();
+    let mut mip_level_size = texture.size();
+    let mut previous_level_pixels = vec![];
+    for level in 0..texture.mip_level_count() {
+        let mut pixels =
+            Vec::with_capacity((4 * mip_level_size.width * mip_level_size.height) as usize);
+
+        if level == 0 {
+            pixels = data.clone();
+        } else {
+            for i in 0..mip_level_size.width {
+                for j in 0..mip_level_size.height {
+                    // Get the corresponding 4 pixels from the previous level
+
+                    let width = mip_level_size.width as usize;
+                    let mip_level_index = 2 * width;
+                    let height_index = 2 * j as usize;
+                    let width_index = 2 * i as usize;
+                    let i00 = 4 * (mip_level_index * height_index + width_index);
+                    let i01 = 4 * (mip_level_index * height_index + (width_index + 1));
+                    let i10 = 4 * (mip_level_index * (height_index + 1) + width_index);
+                    let i11 = 4 * (mip_level_index * (height_index + 1) + (width_index + 1));
+
+                    let p00: &[u8] = &previous_level_pixels[i00..(i00 + 4)];
+                    let p01 = &previous_level_pixels[i01..(i01 + 4)];
+                    let p10 = &previous_level_pixels[i10..(i10 + 4)];
+                    let p11 = &previous_level_pixels[i11..(i11 + 4)];
+                    // Average
+                    let r = (p00[0] as u32 + p01[0] as u32 + p10[0] as u32 + p11[0] as u32) / 4;
+                    let g = (p00[1] as u32 + p01[1] as u32 + p10[1] as u32 + p11[1] as u32) / 4;
+                    let b = (p00[2] as u32 + p01[2] as u32 + p10[2] as u32 + p11[2] as u32) / 4;
+                    let a = (p00[3] as u32 + p01[3] as u32 + p10[3] as u32 + p11[3] as u32) / 4;
+                    pixels.extend([r as u8, g as u8, b as u8, a as u8])
+                }
+            }
+        }
+        let destination = wgpu::ImageCopyTextureBase {
+            texture,
+            mip_level: level,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        };
+        let source = wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * mip_level_size.width),
+            rows_per_image: Some(mip_level_size.height),
+        };
+        queue.write_texture(destination, &pixels, source, mip_level_size);
+        mip_level_size.width /= 2;
+        mip_level_size.height /= 2;
+        previous_level_pixels = pixels;
+    }
+}
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 struct VertexAttribute {

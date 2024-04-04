@@ -29,23 +29,17 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.position = uniforms.projection * uniforms.view * uniforms.model * vec4f(in.position, 1.0);
     out.color = in.color; 
     out.normal = (uniforms.model * vec4f(in.normal,0.0)).xyz;
-    out.uv = in.uv * 6;
+    out.uv = in.uv;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let normal = normalize(in.normal);
-    let light_direction1 = vec3f(0.5,-0.9,0.1);
-    let shading1 = max(0.0,dot(normal,light_direction1));
-
-    let light_direction2 = vec3f(0.2, 0.4, 0.3);
-    let shading2 = max(0.0, dot(normal,light_direction2));
-
-    let light_color1 = vec3f(1.0, 0.9, 0.6);
-    let light_color2 = vec3f(0.6, 0.9, 1.0);
-    let shading = light_color1 * shading1 + light_color2 * shading2;
-    // let color = in.color * shading;
+    let light_direction = vec3f(0.5,-0.9,0.1);
+    let shading = max(0.0,dot(normal,light_direction));
+    let light_color = shading *  vec3f(1.0);
+    // let color = textureSample(gradient_texture,texture_sampler,in.uv).rgb * shading * in.color;
     let color = textureSample(gradient_texture,texture_sampler,in.uv).rgb;
     
     let linear_color = pow(color, vec3f(2.2)); // Gamma correction
