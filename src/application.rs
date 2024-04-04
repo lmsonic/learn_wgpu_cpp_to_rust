@@ -38,14 +38,16 @@ pub struct ApplicationState {
 
 impl ApplicationState {
     pub fn new(window: &Arc<Window>) -> Self {
-        let (surface, device, queue, config) = initialize_wgpu(window);
-        let (depth_texture, depth_view) = initialize_depth_texture(&device, window);
-        let (texture, texture_view, sampler) = initialize_texture(&device, &queue);
-        let (vertices, vertex_buffer) = initialize_geometry(&device);
-        let (uniforms, uniform_buffer) = initialize_uniforms(&device, window);
+        let size = window.inner_size();
+        let (surface, device, queue, config) = init_wgpu(window);
+        let (depth_texture, depth_view) = init_depth(&device, size.width, size.height);
+        let (texture, texture_view, sampler) = init_texture(&device, &queue);
+        let (vertices, vertex_buffer) = init_geometry(&device);
+        let (uniforms, uniform_buffer) =
+            init_uniforms(&device, size.width as f32 / size.height as f32);
         let (bind_group_layout, bind_group) =
-            initialize_bind_groups(&device, &uniform_buffer, &texture_view, &sampler);
-        let render_pipeline = initialize_render_pipeline(
+            init_bind_groups(&device, &uniform_buffer, &texture_view, &sampler);
+        let render_pipeline = init_render_pipeline(
             &device,
             &bind_group_layout,
             depth_texture.format(),
@@ -157,11 +159,16 @@ impl ApplicationState {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
+            (self.depth_texture, self.depth_view) =
+                init_depth(&self.device, new_size.width, new_size.height);
+            let aspect = new_size.width as f32 / new_size.height as f32;
+            self.uniforms.projection =
+                Mat4::perspective_lh(f32::to_radians(45.0), aspect, 0.01, 100.0);
         }
     }
 }
 
-fn initialize_texture(
+fn init_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
 ) -> (wgpu::Texture, wgpu::TextureView, wgpu::Sampler) {
@@ -185,7 +192,7 @@ fn initialize_texture(
     (texture, texture_view, sampler)
 }
 
-fn initialize_geometry(device: &wgpu::Device) -> (Vec<VertexAttribute>, wgpu::Buffer) {
+fn init_geometry(device: &wgpu::Device) -> (Vec<VertexAttribute>, wgpu::Buffer) {
     let vertices = load_geometry("resources/fourareen/fourareen.obj");
 
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -210,18 +217,13 @@ struct Uniforms {
     time: f32,
     _padding: [f32; 3],
 }
-fn initialize_uniforms(device: &wgpu::Device, window: &Arc<Window>) -> (Uniforms, wgpu::Buffer) {
+fn init_uniforms(device: &wgpu::Device, aspect: f32) -> (Uniforms, wgpu::Buffer) {
     let start_time = time::Instant::now();
 
     let uniforms = Uniforms {
         model: Mat4::IDENTITY,
         view: Mat4::look_at_lh(Vec3::new(-2.0, -3.0, 2.0), Vec3::ZERO, Vec3::Z),
-        projection: Mat4::perspective_lh(
-            f32::to_radians(45.0),
-            window.inner_size().width as f32 / window.inner_size().height as f32,
-            0.01,
-            100.0,
-        ),
+        projection: Mat4::perspective_lh(f32::to_radians(45.0), aspect, 0.01, 100.0),
         color: Vec4::new(0.0, 1.0, 0.4, 1.0),
         time: start_time.elapsed().as_secs_f32(),
         _padding: Default::default(),
@@ -234,7 +236,7 @@ fn initialize_uniforms(device: &wgpu::Device, window: &Arc<Window>) -> (Uniforms
     (uniforms, uniform_buffer)
 }
 
-fn initialize_bind_groups(
+fn init_bind_groups(
     device: &wgpu::Device,
     uniform_buffer: &wgpu::Buffer,
     texture_view: &wgpu::TextureView,
@@ -298,7 +300,7 @@ fn initialize_bind_groups(
     (bind_group_layout, bind_group)
 }
 
-fn initialize_render_pipeline(
+fn init_render_pipeline(
     device: &wgpu::Device,
     bind_group_layout: &wgpu::BindGroupLayout,
     depth_texture_format: wgpu::TextureFormat,
@@ -365,7 +367,7 @@ fn initialize_render_pipeline(
         multiview: None,
     })
 }
-fn initialize_wgpu(
+fn init_wgpu(
     window: &Arc<Window>,
 ) -> (
     wgpu::Surface<'static>,
@@ -433,16 +435,17 @@ fn initialize_wgpu(
     (surface, device, queue, config)
 }
 
-fn initialize_depth_texture(
+fn init_depth(
     device: &wgpu::Device,
-    window: &Arc<Window>,
+    width: u32,
+    height: u32,
 ) -> (wgpu::Texture, wgpu::TextureView) {
     let depth_texture_format = wgpu::TextureFormat::Depth24Plus;
     let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Depth Texture"),
         size: wgpu::Extent3d {
-            width: window.inner_size().width,
-            height: window.inner_size().height,
+            width,
+            height,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -495,6 +498,7 @@ impl Application {
                 WindowEvent::Resized(new_size) => self.state.resize(new_size),
                 WindowEvent::CloseRequested => elwt.exit(),
                 WindowEvent::RedrawRequested => self.window.request_redraw(),
+
                 _ => {}
             },
             Event::AboutToWait => {
