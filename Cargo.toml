@@ -16,6 +16,7 @@ tracing-subscriber = "0.3.18"
 wgpu = "0.19.3"
 winit = "0.29.15"
 
+
 [lints.rust]
 unsafe_code = "deny"
 non_ascii_idents = "warn"
@@ -28,8 +29,7 @@ missing_copy_implementations = "warn"
 missing_debug_implementations = "warn"
 future_incompatible = "warn"
 nonstandard_style = "warn"
-unwrap_used = "warn"
-expect_used = "warn"
+
 
 [lints.clippy]
 # cargo_common_metadata = { level = "allow ", priority = -1 }

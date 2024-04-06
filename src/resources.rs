@@ -128,6 +128,24 @@ pub struct VertexAttribute {
     pub color: Vec3,
     pub uv: Vec2,
 }
+
+impl VertexAttributeLayout for VertexAttribute {
+    fn layout() -> wgpu::VertexBufferLayout<'static> {
+        use std::mem;
+        const ATTRIBUTES: [wgpu::VertexAttribute; 4] =
+            wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3,2=>Float32x3,3=>Float32x2];
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &ATTRIBUTES,
+        }
+    }
+}
+
+pub trait VertexAttributeLayout {
+    fn layout() -> wgpu::VertexBufferLayout<'static>;
+}
+
 pub fn load_geometry(path: impl AsRef<Path> + Debug) -> Vec<VertexAttribute> {
     let (models, _) = tobj::load_obj(
         path,
