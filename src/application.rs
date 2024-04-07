@@ -5,15 +5,19 @@ mod texture;
 mod wgpu_context;
 
 use std::{
+    default,
+    f32::{consts::PI, EPSILON},
     sync::Arc,
-    time::{self, Instant},
+    time::{self, Duration, Instant},
 };
 
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Affine3A, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A, Vec4};
 
 use winit::{
-    event::{Event, WindowEvent},
+    dpi::{PhysicalPosition, PhysicalSize},
+    event::{ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
+    keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowBuilder},
 };
 
@@ -36,6 +40,10 @@ pub struct ApplicationState {
     bind_group: BindGroup,
     render_pipeline: render_pipeline::RenderPipeline,
     start_time: Instant,
+    delta_time: f32,
+    camera: Camera,
+    mouse_pos: PhysicalPosition<f64>,
+    drag: bool,
 }
 
 impl ApplicationState {
@@ -77,12 +85,32 @@ impl ApplicationState {
             bind_group,
             render_pipeline,
             start_time,
+            delta_time: 1.0 / 144.0,
+            mouse_pos: PhysicalPosition::default(),
+            camera: Camera {
+                rotation: Quat::from_mat4(&Mat4::look_to_lh(Vec3::ZERO, Vec3::NEG_Y, Vec3::Z)),
+                translation: Vec3::ZERO,
+                velocity: Vec3::ZERO,
+            },
+            drag: false,
         }
     }
 
     pub fn update(&mut self) {
+        const SPEED: f32 = 2.0;
+        let begin_frame_time = time::Instant::now();
+
         self.uniform_buffer.data.time = self.start_time.elapsed().as_secs_f32();
+        self.camera.translation += self.camera.velocity;
+        self.camera.velocity *= 0.9;
+        self.uniform_buffer.data.view = self.camera.get_view_matrix();
+
         self.uniform_buffer.update(&self.wgpu.queue);
+
+        self.render();
+
+        let end_frame_time = time::Instant::now();
+        self.delta_time = (end_frame_time - begin_frame_time).as_secs_f32();
     }
     pub fn render(&mut self) {
         let output = self.wgpu.get_current_texture();
@@ -138,7 +166,7 @@ impl ApplicationState {
         output.present();
     }
 
-    fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    fn resize(&mut self, new_size: PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.wgpu.resize(new_size.width, new_size.height);
             self.depth_texture =
@@ -146,6 +174,56 @@ impl ApplicationState {
             let aspect = new_size.width as f32 / new_size.height as f32;
             self.uniform_buffer.data.projection =
                 Mat4::perspective_lh(f32::to_radians(45.0), aspect, 0.01, 100.0);
+        }
+    }
+
+    fn mouse_moved(&mut self, position: PhysicalPosition<f64>) {
+        const SENSITIVITY: f32 = 0.005;
+        if self.drag {
+            let delta = (Vec2::new(position.x as f32, position.y as f32)
+                - Vec2::new(self.mouse_pos.x as f32, self.mouse_pos.y as f32))
+                * SENSITIVITY;
+
+            let mut eulers = self.camera.rotation.to_euler(glam::EulerRot::XYZ);
+            // eulers.0 = f32::clamp(eulers.0 + delta.y, PI / 2.0 + 1e-5, 3.0 * PI / 2.0 - 1e-5);
+            eulers.0 -= delta.y;
+            eulers.2 -= delta.x;
+            self.camera.rotation =
+                Quat::from_euler(glam::EulerRot::XYZ, eulers.0, eulers.1, eulers.2);
+            self.camera.rotation = self.camera.rotation.normalize();
+        }
+        self.mouse_pos = position;
+    }
+
+    fn mouse_input(&mut self, button: MouseButton, state: ElementState) {
+        if button == MouseButton::Middle {
+            match state {
+                ElementState::Pressed => self.drag = true,
+                ElementState::Released => self.drag = false,
+            }
+        }
+    }
+
+    fn mouse_scroll(&mut self, delta: MouseScrollDelta) {
+        const SENSITIVITY: f32 = 0.1;
+
+        match delta {
+            MouseScrollDelta::LineDelta(_, y) => self.camera.translation.z -= y * SENSITIVITY,
+            MouseScrollDelta::PixelDelta(PhysicalPosition { x: _, y }) => {
+                self.camera.translation.z -= y as f32 * SENSITIVITY;
+            }
+        }
+    }
+
+    fn key_input(&mut self, event: KeyCode) {
+        match event {
+            KeyCode::KeyW => self.camera.velocity.z -= self.delta_time,
+            KeyCode::KeyS => self.camera.velocity.z += self.delta_time,
+            KeyCode::KeyD => self.camera.velocity.x -= self.delta_time,
+            KeyCode::KeyA => self.camera.velocity.x += self.delta_time,
+            KeyCode::Space => self.camera.velocity.y -= self.delta_time,
+            KeyCode::ShiftLeft => self.camera.velocity.y += self.delta_time,
+            _ => {}
         }
     }
 }
@@ -159,6 +237,19 @@ struct Uniforms {
     color: Vec4,
     time: f32,
     _padding: [f32; 3],
+}
+
+#[derive(Clone, Copy, Default)]
+struct Camera {
+    rotation: Quat,
+    translation: Vec3,
+    velocity: Vec3,
+}
+
+impl Camera {
+    fn get_view_matrix(&self) -> Mat4 {
+        Mat4::from_rotation_translation(self.rotation, self.translation)
+    }
 }
 
 pub struct Application {
@@ -190,12 +281,23 @@ impl Application {
                 WindowEvent::Resized(new_size) => self.state.resize(new_size),
                 WindowEvent::CloseRequested => elwt.exit(),
                 WindowEvent::RedrawRequested => self.window.request_redraw(),
-
+                WindowEvent::CursorMoved { position, .. } => self.state.mouse_moved(position),
+                WindowEvent::MouseInput { state, button, .. } => {
+                    self.state.mouse_input(button, state);
+                }
+                WindowEvent::MouseWheel { delta, .. } => self.state.mouse_scroll(delta),
+                WindowEvent::KeyboardInput {
+                    event: KeyEvent { physical_key, .. },
+                    ..
+                } => {
+                    if let PhysicalKey::Code(key) = physical_key {
+                        self.state.key_input(key);
+                    }
+                }
                 _ => {}
             },
             Event::AboutToWait => {
                 self.state.update();
-                self.state.render();
             }
 
             _ => (),
