@@ -149,9 +149,9 @@ impl ApplicationState {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.05,
-                            g: 0.05,
-                            b: 0.05,
+                            r: self.gui_state.clear_color[0].into(),
+                            g: self.gui_state.clear_color[0].into(),
+                            b: self.gui_state.clear_color[0].into(),
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -311,6 +311,10 @@ impl Application {
                 event: window_event,
                 window_id,
             } if self.window.id() == window_id => {
+                let consumed = self.state.egui.handle_input(&self.window, &window_event);
+                if consumed {
+                    return;
+                }
                 match window_event {
                     WindowEvent::Resized(new_size) => self.state.resize(new_size),
                     WindowEvent::CloseRequested => elwt.exit(),
@@ -330,7 +334,6 @@ impl Application {
                     }
                     _ => {}
                 }
-                self.state.egui.handle_input(&self.window, &window_event);
             }
             Event::AboutToWait => {
                 self.state.update();

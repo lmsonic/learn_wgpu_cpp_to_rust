@@ -18,7 +18,7 @@ pub struct GuiState {
     counter: i32,
     show_demo_window: bool,
     show_other_window: bool,
-    clear_color: [f32; 3],
+    pub clear_color: [f32; 3],
 }
 
 impl GuiState {
@@ -93,8 +93,9 @@ impl EguiRenderer {
         }
     }
 
-    pub fn handle_input(&mut self, window: &Window, event: &WindowEvent) {
-        let _ = self.state.on_window_event(window, event);
+    pub fn handle_input(&mut self, window: &Window, event: &WindowEvent) -> bool {
+        let response = self.state.on_window_event(window, event);
+        response.consumed
     }
 
     #[allow(clippy::too_many_arguments)]
