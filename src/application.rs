@@ -5,13 +5,12 @@ mod texture;
 mod wgpu_context;
 
 use std::{
-    default,
-    f32::{consts::PI, EPSILON},
     sync::Arc,
     time::{self, Duration, Instant},
 };
 
-use glam::{Affine3A, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A, Vec4};
+use egui_wgpu::ScreenDescriptor;
+use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 
 use winit::{
     dpi::{PhysicalPosition, PhysicalSize},
@@ -21,7 +20,10 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use crate::resources::{load_geometry, VertexAttribute};
+use crate::{
+    gui::{EguiRenderer, GuiState},
+    resources::{load_geometry, VertexAttribute},
+};
 
 mod buffer;
 
@@ -40,10 +42,13 @@ pub struct ApplicationState {
     bind_group: BindGroup,
     render_pipeline: render_pipeline::RenderPipeline,
     start_time: Instant,
-    delta_time: f32,
+    delta_time: Duration,
     camera: Camera,
     mouse_pos: PhysicalPosition<f64>,
     drag: bool,
+    egui: EguiRenderer,
+    window: Arc<Window>,
+    gui_state: GuiState,
 }
 
 impl ApplicationState {
@@ -76,6 +81,16 @@ impl ApplicationState {
             wgpu.config.format,
             wgpu::include_wgsl!("shader.wgsl"),
         );
+        let camera_pos = Vec3::new(-0.5, -0.5, 0.5);
+
+        let egui = EguiRenderer::new(
+            &wgpu.device,       // wgpu Device
+            wgpu.config.format, // TextureFormat
+            None,               // this can be None
+            1,                  // samples
+            window,             // winit Window
+        );
+
         Self {
             wgpu,
             depth_texture,
@@ -85,14 +100,17 @@ impl ApplicationState {
             bind_group,
             render_pipeline,
             start_time,
-            delta_time: 1.0 / 144.0,
+            delta_time: Duration::from_secs_f64(1.0 / 144.0),
             mouse_pos: PhysicalPosition::default(),
             camera: Camera {
-                rotation: Quat::from_mat4(&Mat4::look_to_lh(Vec3::ZERO, Vec3::NEG_Y, Vec3::Z)),
-                translation: Vec3::ZERO,
+                rotation: Quat::from_mat4(&Mat4::look_at_lh(camera_pos, Vec3::ZERO, Vec3::Z)),
+                translation: camera_pos,
                 velocity: Vec3::ZERO,
             },
             drag: false,
+            egui,
+            window: window.clone(),
+            gui_state: GuiState::default(),
         }
     }
 
@@ -110,7 +128,7 @@ impl ApplicationState {
         self.render();
 
         let end_frame_time = time::Instant::now();
-        self.delta_time = (end_frame_time - begin_frame_time).as_secs_f32();
+        self.delta_time = (end_frame_time - begin_frame_time);
     }
     pub fn render(&mut self) {
         let output = self.wgpu.get_current_texture();
@@ -158,6 +176,20 @@ impl ApplicationState {
 
             render_pass.draw(0..self.vertex_buffer.vertices.len() as u32, 0..1);
         }
+        let screen_descriptor = ScreenDescriptor {
+            size_in_pixels: [self.wgpu.config.width, self.wgpu.config.height],
+            pixels_per_point: self.window.scale_factor() as f32,
+        };
+
+        self.egui.draw(
+            &self.wgpu.device,
+            &self.wgpu.queue,
+            &mut encoder,
+            &self.window,
+            &view,
+            &screen_descriptor,
+            |ui| self.gui_state.gui(ui, self.delta_time),
+        );
 
         let command = encoder.finish();
 
@@ -216,13 +248,14 @@ impl ApplicationState {
     }
 
     fn key_input(&mut self, event: KeyCode) {
+        let delta_time = self.delta_time.as_secs_f32();
         match event {
-            KeyCode::KeyW => self.camera.velocity.z -= self.delta_time,
-            KeyCode::KeyS => self.camera.velocity.z += self.delta_time,
-            KeyCode::KeyD => self.camera.velocity.x -= self.delta_time,
-            KeyCode::KeyA => self.camera.velocity.x += self.delta_time,
-            KeyCode::Space => self.camera.velocity.y -= self.delta_time,
-            KeyCode::ShiftLeft => self.camera.velocity.y += self.delta_time,
+            KeyCode::KeyW => self.camera.velocity.z -= delta_time,
+            KeyCode::KeyS => self.camera.velocity.z += delta_time,
+            KeyCode::KeyD => self.camera.velocity.x -= delta_time,
+            KeyCode::KeyA => self.camera.velocity.x += delta_time,
+            KeyCode::Space => self.camera.velocity.y -= delta_time,
+            KeyCode::ShiftLeft => self.camera.velocity.y += delta_time,
             _ => {}
         }
     }
@@ -276,26 +309,29 @@ impl Application {
         self.event_loop.run(move |event, elwt| match event {
             Event::WindowEvent {
                 event: window_event,
-                ..
-            } => match window_event {
-                WindowEvent::Resized(new_size) => self.state.resize(new_size),
-                WindowEvent::CloseRequested => elwt.exit(),
-                WindowEvent::RedrawRequested => self.window.request_redraw(),
-                WindowEvent::CursorMoved { position, .. } => self.state.mouse_moved(position),
-                WindowEvent::MouseInput { state, button, .. } => {
-                    self.state.mouse_input(button, state);
-                }
-                WindowEvent::MouseWheel { delta, .. } => self.state.mouse_scroll(delta),
-                WindowEvent::KeyboardInput {
-                    event: KeyEvent { physical_key, .. },
-                    ..
-                } => {
-                    if let PhysicalKey::Code(key) = physical_key {
-                        self.state.key_input(key);
+                window_id,
+            } if self.window.id() == window_id => {
+                match window_event {
+                    WindowEvent::Resized(new_size) => self.state.resize(new_size),
+                    WindowEvent::CloseRequested => elwt.exit(),
+                    WindowEvent::RedrawRequested => self.window.request_redraw(),
+                    WindowEvent::CursorMoved { position, .. } => self.state.mouse_moved(position),
+                    WindowEvent::MouseInput { state, button, .. } => {
+                        self.state.mouse_input(button, state);
                     }
+                    WindowEvent::MouseWheel { delta, .. } => self.state.mouse_scroll(delta),
+                    WindowEvent::KeyboardInput {
+                        event: KeyEvent { physical_key, .. },
+                        ..
+                    } => {
+                        if let PhysicalKey::Code(key) = physical_key {
+                            self.state.key_input(key);
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+                self.state.egui.handle_input(&self.window, &window_event);
+            }
             Event::AboutToWait => {
                 self.state.update();
             }
