@@ -1,12 +1,14 @@
+use std::f32::consts::{PI, TAU};
 use std::time::Duration;
 
 use egui::epaint::Shadow;
-use egui::{Context, Visuals};
+use egui::{Context, Ui, Visuals};
 use egui_wgpu::Renderer;
 use egui_wgpu::ScreenDescriptor;
 
 use egui_winit::State;
 
+use glam::{vec2, vec3, DVec3, Vec2, Vec3, Vec4, Vec4Swizzles};
 use tracing_subscriber::fmt::format;
 use wgpu::{CommandEncoder, Device, Queue, TextureFormat, TextureView};
 use winit::event::WindowEvent;
@@ -14,14 +16,19 @@ use winit::window::Window;
 
 #[derive(Default)]
 pub struct GuiState {
-    float: f32,
-    counter: i32,
-    show_demo_window: bool,
-    show_other_window: bool,
+    pub float: f32,
+    pub counter: i32,
+    pub show_demo_window: bool,
+    pub show_other_window: bool,
     pub clear_color: [f32; 3],
+    pub light_direction1: Vec4,
+    pub light_color1: [f32; 3],
+    pub light_direction2: Vec4,
+    pub light_color2: [f32; 3],
 }
 
 impl GuiState {
+    #[allow(clippy::shadow_unrelated)]
     pub fn gui(&mut self, ui: &Context, delta_time: Duration) {
         egui::Window::new("Hello, world!")
             .resizable(true)
@@ -33,6 +40,14 @@ impl GuiState {
                 ui.checkbox(&mut self.show_other_window, "Another Window");
                 ui.add(egui::Slider::new(&mut self.float, 0.0..=1.0).text("float"));
                 ui.color_edit_button_rgb(&mut self.clear_color);
+
+                drag_direction(ui, &mut self.light_direction1);
+
+                ui.color_edit_button_rgb(&mut self.light_color1);
+
+                drag_direction(ui, &mut self.light_direction2);
+
+                ui.color_edit_button_rgb(&mut self.light_color2);
 
                 ui.horizontal(|ui| {
                     if ui.button("Click me!").clicked() {
@@ -46,6 +61,36 @@ impl GuiState {
                     delta_time.as_secs_f32()
                 ));
             });
+    }
+}
+fn drag_direction(ui: &mut Ui, v: &mut Vec4) {
+    let v3 = v.truncate();
+    let mut polar = cartesian_to_polar(v3);
+    ui.horizontal(|ui| {
+        ui.drag_angle(&mut polar.x);
+        polar.x = polar.x.clamp(-PI * 0.5, PI * 0.5);
+        ui.drag_angle(&mut polar.y);
+        polar.y = polar.y.clamp(-PI * 0.5, PI * 0.5);
+    });
+    *v = polar_to_cartesian(&polar).extend(0.0);
+}
+
+fn cartesian_to_polar(cartesian: Vec3) -> Vec2 {
+    let length = cartesian.length();
+    let normalized = cartesian / length;
+    Vec2 {
+        x: normalized.y.asin(),                  // latitude
+        y: (normalized.x / normalized.z).atan(), // longitude
+    }
+}
+
+fn polar_to_cartesian(polar: &Vec2) -> Vec3 {
+    let latitude = polar.x;
+    let longitude = polar.y;
+    Vec3 {
+        x: latitude.cos() * longitude.sin(),
+        y: latitude.sin(),
+        z: latitude.cos() * longitude.cos(),
     }
 }
 

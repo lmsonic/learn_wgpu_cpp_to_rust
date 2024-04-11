@@ -8,20 +8,25 @@ pub struct BindGroup {
 impl BindGroup {
     pub(crate) fn new(
         device: &wgpu::Device,
-        uniform_buffer: &wgpu::Buffer,
+        uniform_buffers: &[&wgpu::Buffer],
         textures: &[&Texture],
     ) -> Self {
-        let mut layout_entries = vec![wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }];
-        let mut binding = 1;
+        let mut layout_entries = vec![];
+        let mut binding = 0;
+        for _ in uniform_buffers {
+            layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            });
+            binding += 1;
+        }
+
         for _ in textures {
             layout_entries.extend([
                 wgpu::BindGroupLayoutEntry {
@@ -48,25 +53,29 @@ impl BindGroup {
             label: Some("Uniform Bind Group Layout"),
             entries: &layout_entries,
         });
+        let mut binding = 0;
+        let mut bind_group_entries = vec![];
 
-        let mut entries = vec![wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                buffer: uniform_buffer,
-                offset: 0,
-                size: None,
-            }),
-        }];
+        for uniforms in uniform_buffers {
+            bind_group_entries.push(wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: uniforms,
+                    offset: 0,
+                    size: None,
+                }),
+            });
+            binding += 1;
+        }
 
-        binding = 1;
         for texture in textures {
-            entries.extend([
+            bind_group_entries.extend([
                 wgpu::BindGroupEntry {
-                    binding: 1,
+                    binding,
                     resource: wgpu::BindingResource::TextureView(&texture.view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 2,
+                    binding: binding + 1,
                     resource: wgpu::BindingResource::Sampler(&texture.sampler),
                 },
             ]);
@@ -77,7 +86,7 @@ impl BindGroup {
             label: Some("Uniform Bind Group Layout"),
 
             layout: &bind_group_layout,
-            entries: &entries,
+            entries: &bind_group_entries,
         });
         Self {
             bind_group_layout,

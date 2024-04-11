@@ -46,7 +46,7 @@ where
             "Uniform alignment needs to be multiple of 4"
         );
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Uniform Buffer"),
+            label: None,
             contents: bytemuck::cast_slice(&[data]),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
         });

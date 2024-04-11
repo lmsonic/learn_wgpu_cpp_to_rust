@@ -38,7 +38,7 @@ pub struct ApplicationState {
     depth_texture: Texture,
     texture: Texture,
     vertex_buffer: VertexBuffer<VertexAttribute>,
-    uniform_buffer: UniformBuffer<Uniforms>,
+    uniforms: UniformBuffer<Uniforms>,
     bind_group: BindGroup,
     render_pipeline: render_pipeline::RenderPipeline,
     start_time: Instant,
@@ -49,6 +49,7 @@ pub struct ApplicationState {
     egui: EguiRenderer,
     window: Arc<Window>,
     gui_state: GuiState,
+    light_uniforms: UniformBuffer<LightUniforms>,
 }
 
 impl ApplicationState {
@@ -73,7 +74,19 @@ impl ApplicationState {
         };
         let uniform_buffer = UniformBuffer::new(uniforms, &wgpu.device);
 
-        let bind_group = BindGroup::new(&wgpu.device, &uniform_buffer.buffer, &[&texture]);
+        let light_uniforms = UniformBuffer::new(
+            LightUniforms {
+                directions: [[0.5, -0.9, 0.1, 0.0].into(), [0.2, 0.4, 0.3, 0.0].into()],
+                colors: [[1.0, 0.9, 0.6, 1.0].into(), [0.6, 0.9, 1.0, 1.0].into()],
+            },
+            &wgpu.device,
+        );
+
+        let bind_group = BindGroup::new(
+            &wgpu.device,
+            &[&uniform_buffer.buffer, &light_uniforms.buffer],
+            &[&texture],
+        );
         let render_pipeline = render_pipeline::RenderPipeline::new::<VertexAttribute>(
             &wgpu.device,
             &bind_group.bind_group_layout,
@@ -96,7 +109,7 @@ impl ApplicationState {
             depth_texture,
             texture,
             vertex_buffer,
-            uniform_buffer,
+            uniforms: uniform_buffer,
             bind_group,
             render_pipeline,
             start_time,
@@ -110,7 +123,15 @@ impl ApplicationState {
             drag: false,
             egui,
             window: window.clone(),
-            gui_state: GuiState::default(),
+            gui_state: GuiState {
+                clear_color: [0.05, 0.05, 0.05],
+                light_color1: light_uniforms.data.colors[0].truncate().to_array(),
+                light_color2: light_uniforms.data.colors[1].truncate().to_array(),
+                light_direction1: light_uniforms.data.directions[0],
+                light_direction2: light_uniforms.data.directions[1],
+                ..Default::default()
+            },
+            light_uniforms,
         }
     }
 
@@ -118,17 +139,19 @@ impl ApplicationState {
         const SPEED: f32 = 2.0;
         let begin_frame_time = time::Instant::now();
 
-        self.uniform_buffer.data.time = self.start_time.elapsed().as_secs_f32();
+        self.uniforms.data.time = self.start_time.elapsed().as_secs_f32();
         self.camera.translation += self.camera.velocity;
         self.camera.velocity *= 0.9;
-        self.uniform_buffer.data.view = self.camera.get_view_matrix();
+        self.uniforms.data.view = self.camera.get_view_matrix();
 
-        self.uniform_buffer.update(&self.wgpu.queue);
+        self.uniforms.update(&self.wgpu.queue);
+
+        self.light_uniforms.update(&self.wgpu.queue);
 
         self.render();
 
         let end_frame_time = time::Instant::now();
-        self.delta_time = (end_frame_time - begin_frame_time);
+        self.delta_time = end_frame_time - begin_frame_time;
     }
     pub fn render(&mut self) {
         let output = self.wgpu.get_current_texture();
@@ -191,6 +214,11 @@ impl ApplicationState {
             |ui| self.gui_state.gui(ui, self.delta_time),
         );
 
+        self.light_uniforms.data.colors[0] = Vec3::from(self.gui_state.light_color1).extend(1.0);
+        self.light_uniforms.data.colors[1] = Vec3::from(self.gui_state.light_color2).extend(1.0);
+        self.light_uniforms.data.directions[0] = self.gui_state.light_direction1;
+        self.light_uniforms.data.directions[1] = self.gui_state.light_direction2;
+
         let command = encoder.finish();
 
         self.wgpu.queue.submit([command]);
@@ -204,7 +232,7 @@ impl ApplicationState {
             self.depth_texture =
                 texture::Texture::depth(&self.wgpu.device, new_size.width, new_size.height);
             let aspect = new_size.width as f32 / new_size.height as f32;
-            self.uniform_buffer.data.projection =
+            self.uniforms.data.projection =
                 Mat4::perspective_lh(f32::to_radians(45.0), aspect, 0.01, 100.0);
         }
     }
@@ -270,6 +298,13 @@ struct Uniforms {
     color: Vec4,
     time: f32,
     _padding: [f32; 3],
+}
+
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct LightUniforms {
+    directions: [Vec4; 2],
+    colors: [Vec4; 2],
 }
 
 #[derive(Clone, Copy, Default)]

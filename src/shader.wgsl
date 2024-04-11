@@ -19,9 +19,16 @@ struct Uniforms {
     color: vec4f,
     time: f32,
 };
+
+struct LightUniforms{
+    directions:array<vec4f,2>,
+    colors:array<vec4f,2>,
+}
+
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
-@group(0) @binding(1) var gradient_texture: texture_2d<f32>;
-@group(0) @binding(2) var texture_sampler: sampler;
+@group(0) @binding(1) var<uniform> light_uniforms: LightUniforms;
+@group(0) @binding(2) var gradient_texture: texture_2d<f32>;
+@group(0) @binding(3) var texture_sampler: sampler;
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
@@ -36,12 +43,17 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let normal = normalize(in.normal);
-    let light_direction = vec3f(0.5,-0.9,0.1);
-    let shading = max(0.0,dot(normal,light_direction));
-    let light_color = shading *  vec3f(1.0);
-    // let color = textureSample(gradient_texture,texture_sampler,in.uv).rgb * shading * in.color;
-    let color = textureSample(gradient_texture,texture_sampler,in.uv).rgb;
+    var shading = vec3f(0.0);
+    for (var i:i32 = 0 ; i<2 ; i++){
+        let direction = normalize(light_uniforms.directions[i].xyz);
+        let color = light_uniforms.colors[i].rgb;
+        shading += max(0.0,dot(direction,normal)) * color;
+    }
+
+    let base_color = textureSample(gradient_texture,texture_sampler,in.uv).rgb;
+    let color = base_color * shading;
     
+
     let linear_color = pow(color, vec3f(2.2)); // Gamma correction
     return vec4f(linear_color, uniforms.color.a);
 }
