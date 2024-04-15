@@ -167,8 +167,8 @@ pub fn load_geometry(path: impl AsRef<Path> + Debug) -> Vec<VertexAttribute> {
                 position: Vec3::new(
                     mesh.positions[i * 3],
                     // Z is up
-                    -mesh.positions[i * 3 + 2],
                     mesh.positions[i * 3 + 1],
+                    mesh.positions[i * 3 + 2],
                 ),
                 normal: if mesh.normals.is_empty() {
                     Vec3::ZERO
@@ -176,8 +176,8 @@ pub fn load_geometry(path: impl AsRef<Path> + Debug) -> Vec<VertexAttribute> {
                     Vec3::new(
                         mesh.normals[i * 3],
                         // Z is up
-                        -mesh.normals[i * 3 + 2],
                         mesh.normals[i * 3 + 1],
+                        mesh.normals[i * 3 + 2],
                     )
                 },
                 color: if mesh.vertex_color.is_empty() {
@@ -185,8 +185,8 @@ pub fn load_geometry(path: impl AsRef<Path> + Debug) -> Vec<VertexAttribute> {
                 } else {
                     Vec3::new(
                         mesh.vertex_color[i * 3],
-                        -mesh.vertex_color[i * 3 + 2],
                         mesh.vertex_color[i * 3 + 1],
+                        mesh.vertex_color[i * 3 + 2],
                     )
                 },
                 uv: if mesh.texcoords.is_empty() {

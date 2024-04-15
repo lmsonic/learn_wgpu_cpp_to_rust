@@ -16,45 +16,48 @@ use winit::window::Window;
 
 #[derive(Default)]
 pub struct GuiState {
-    pub float: f32,
-    pub counter: i32,
-    pub show_demo_window: bool,
-    pub show_other_window: bool,
     pub clear_color: [f32; 3],
     pub light_direction1: Vec4,
     pub light_color1: [f32; 3],
     pub light_direction2: Vec4,
     pub light_color2: [f32; 3],
+    pub hardness: f32,
+    pub diffuse: f32,
+    pub specular: f32,
 }
 
 impl GuiState {
     #[allow(clippy::shadow_unrelated)]
     pub fn gui(&mut self, ui: &Context, delta_time: Duration) {
-        egui::Window::new("Hello, world!")
+        egui::Window::new("Lighting")
             .resizable(true)
             .vscroll(true)
             .default_open(false)
             .show(&ui, |ui| {
-                ui.label("This is some useful text.");
-                ui.checkbox(&mut self.show_demo_window, "Demo Window");
-                ui.checkbox(&mut self.show_other_window, "Another Window");
-                ui.add(egui::Slider::new(&mut self.float, 0.0..=1.0).text("float"));
+                ui.label("Clear Color");
                 ui.color_edit_button_rgb(&mut self.clear_color);
 
+                ui.label("Light Direction 1");
                 drag_direction(ui, &mut self.light_direction1);
 
+                ui.label("Light Color 1");
                 ui.color_edit_button_rgb(&mut self.light_color1);
 
+                ui.label("Light Direction 2");
                 drag_direction(ui, &mut self.light_direction2);
 
+                ui.label("Light Color 2");
                 ui.color_edit_button_rgb(&mut self.light_color2);
 
-                ui.horizontal(|ui| {
-                    if ui.button("Click me!").clicked() {
-                        self.counter += 1;
-                    }
-                    ui.label(format!("counter = {}", self.counter));
-                });
+                ui.label("Hardness");
+                ui.add(egui::Slider::new(&mut self.hardness, 0.0..=100.0));
+
+                ui.label("Diffuse intensity");
+                ui.add(egui::Slider::new(&mut self.diffuse, 0.0..=1.0));
+
+                ui.label("Specular intensity");
+                ui.add(egui::Slider::new(&mut self.specular, 0.0..=1.0));
+
                 ui.label(format!(
                     "Application average {} ms/frame {:.3}",
                     delta_time.as_millis(),
@@ -68,10 +71,10 @@ fn drag_direction(ui: &mut Ui, v: &mut Vec4) {
     let mut polar = cartesian_to_polar(v3);
     ui.horizontal(|ui| {
         ui.drag_angle(&mut polar.x);
-        polar.x = polar.x.clamp(-PI * 0.5, PI * 0.5);
         ui.drag_angle(&mut polar.y);
-        polar.y = polar.y.clamp(-PI * 0.5, PI * 0.5);
     });
+    polar.x = polar.x.clamp(-PI * 0.5, PI * 0.5);
+    polar.y = polar.y.clamp(-PI * 0.5, PI * 0.5);
     *v = polar_to_cartesian(&polar).extend(0.0);
 }
 

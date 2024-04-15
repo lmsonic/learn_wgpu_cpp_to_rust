@@ -5,6 +5,7 @@ mod texture;
 mod wgpu_context;
 
 use std::{
+    f32::consts::PI,
     sync::Arc,
     time::{self, Duration, Instant},
 };
@@ -64,13 +65,19 @@ impl ApplicationState {
 
         let start_time = time::Instant::now();
         let aspect = size.width as f32 / size.height as f32;
+
+        let camera = Camera {
+            orbit_radius: 2.0,
+            ..Default::default()
+        };
+
         let uniforms = Uniforms {
             model: Mat4::IDENTITY,
-            view: Mat4::look_at_lh(Vec3::new(-2.0, -3.0, 2.0), Vec3::ZERO, Vec3::Z),
+            view: camera.get_view_matrix(),
             projection: Mat4::perspective_lh(f32::to_radians(45.0), aspect, 0.01, 100.0),
             color: Vec4::new(0.0, 1.0, 0.4, 1.0),
             time: start_time.elapsed().as_secs_f32(),
-            _padding: Default::default(),
+            camera_world_position: camera.get_translation(),
         };
         let uniform_buffer = UniformBuffer::new(uniforms, &wgpu.device);
 
@@ -78,6 +85,10 @@ impl ApplicationState {
             LightUniforms {
                 directions: [[0.5, -0.9, 0.1, 0.0].into(), [0.2, 0.4, 0.3, 0.0].into()],
                 colors: [[1.0, 0.9, 0.6, 1.0].into(), [0.6, 0.9, 1.0, 1.0].into()],
+                hardness: 16.0,
+                diffuse: 1.0,
+                specular: 0.5,
+                ..Default::default()
             },
             &wgpu.device,
         );
@@ -94,7 +105,6 @@ impl ApplicationState {
             wgpu.config.format,
             wgpu::include_wgsl!("shader.wgsl"),
         );
-        let camera_pos = Vec3::new(-0.5, -0.5, 0.5);
 
         let egui = EguiRenderer::new(
             &wgpu.device,       // wgpu Device
@@ -115,11 +125,7 @@ impl ApplicationState {
             start_time,
             delta_time: Duration::from_secs_f64(1.0 / 144.0),
             mouse_pos: PhysicalPosition::default(),
-            camera: Camera {
-                rotation: Quat::from_mat4(&Mat4::look_at_lh(camera_pos, Vec3::ZERO, Vec3::Z)),
-                translation: camera_pos,
-                velocity: Vec3::ZERO,
-            },
+            camera,
             drag: false,
             egui,
             window: window.clone(),
@@ -129,20 +135,21 @@ impl ApplicationState {
                 light_color2: light_uniforms.data.colors[1].truncate().to_array(),
                 light_direction1: light_uniforms.data.directions[0],
                 light_direction2: light_uniforms.data.directions[1],
-                ..Default::default()
+                hardness: light_uniforms.data.hardness,
+                diffuse: light_uniforms.data.diffuse,
+                specular: light_uniforms.data.specular,
             },
             light_uniforms,
         }
     }
 
     pub fn update(&mut self) {
-        const SPEED: f32 = 2.0;
         let begin_frame_time = time::Instant::now();
 
         self.uniforms.data.time = self.start_time.elapsed().as_secs_f32();
-        self.camera.translation += self.camera.velocity;
-        self.camera.velocity *= 0.9;
+
         self.uniforms.data.view = self.camera.get_view_matrix();
+        self.uniforms.data.camera_world_position = self.camera.get_translation();
 
         self.uniforms.update(&self.wgpu.queue);
 
@@ -213,11 +220,20 @@ impl ApplicationState {
             &screen_descriptor,
             |ui| self.gui_state.gui(ui, self.delta_time),
         );
-
-        self.light_uniforms.data.colors[0] = Vec3::from(self.gui_state.light_color1).extend(1.0);
-        self.light_uniforms.data.colors[1] = Vec3::from(self.gui_state.light_color2).extend(1.0);
-        self.light_uniforms.data.directions[0] = self.gui_state.light_direction1;
-        self.light_uniforms.data.directions[1] = self.gui_state.light_direction2;
+        self.light_uniforms.data = LightUniforms {
+            directions: [
+                self.gui_state.light_direction1,
+                self.gui_state.light_direction2,
+            ],
+            colors: [
+                Vec3::from(self.gui_state.light_color1).extend(1.0),
+                Vec3::from(self.gui_state.light_color2).extend(1.0),
+            ],
+            hardness: self.gui_state.hardness,
+            diffuse: self.gui_state.diffuse,
+            specular: self.gui_state.specular,
+            _padding: Default::default(),
+        };
 
         let command = encoder.finish();
 
@@ -240,17 +256,11 @@ impl ApplicationState {
     fn mouse_moved(&mut self, position: PhysicalPosition<f64>) {
         const SENSITIVITY: f32 = 0.005;
         if self.drag {
-            let delta = (Vec2::new(position.x as f32, position.y as f32)
-                - Vec2::new(self.mouse_pos.x as f32, self.mouse_pos.y as f32))
-                * SENSITIVITY;
-
-            let mut eulers = self.camera.rotation.to_euler(glam::EulerRot::XYZ);
-            // eulers.0 = f32::clamp(eulers.0 + delta.y, PI / 2.0 + 1e-5, 3.0 * PI / 2.0 - 1e-5);
-            eulers.0 -= delta.y;
-            eulers.2 -= delta.x;
-            self.camera.rotation =
-                Quat::from_euler(glam::EulerRot::XYZ, eulers.0, eulers.1, eulers.2);
-            self.camera.rotation = self.camera.rotation.normalize();
+            let delta_y = (position.y - self.mouse_pos.y) as f32 * SENSITIVITY;
+            let delta_x = (position.x - self.mouse_pos.x) as f32 * SENSITIVITY;
+            self.camera.yaw += delta_x;
+            self.camera.pitch -= delta_y;
+            self.camera.pitch = self.camera.pitch.clamp(-PI * 0.4, PI * 0.4);
         }
         self.mouse_pos = position;
     }
@@ -268,55 +278,68 @@ impl ApplicationState {
         const SENSITIVITY: f32 = 0.1;
 
         match delta {
-            MouseScrollDelta::LineDelta(_, y) => self.camera.translation.z -= y * SENSITIVITY,
+            MouseScrollDelta::LineDelta(_, y) => self.camera.orbit_radius -= y * SENSITIVITY,
             MouseScrollDelta::PixelDelta(PhysicalPosition { x: _, y }) => {
-                self.camera.translation.z -= y as f32 * SENSITIVITY;
+                self.camera.orbit_radius -= y as f32 * SENSITIVITY;
             }
         }
     }
 
     fn key_input(&mut self, event: KeyCode) {
-        let delta_time = self.delta_time.as_secs_f32();
-        match event {
-            KeyCode::KeyW => self.camera.velocity.z -= delta_time,
-            KeyCode::KeyS => self.camera.velocity.z += delta_time,
-            KeyCode::KeyD => self.camera.velocity.x -= delta_time,
-            KeyCode::KeyA => self.camera.velocity.x += delta_time,
-            KeyCode::Space => self.camera.velocity.y -= delta_time,
-            KeyCode::ShiftLeft => self.camera.velocity.y += delta_time,
-            _ => {}
+        if self.drag {
+            return;
         }
+        // let delta_time = self.delta_time.as_secs_f32();
+        // match event {
+        //     KeyCode::KeyW => self.camera.velocity.z -= delta_time,
+        //     KeyCode::KeyS => self.camera.velocity.z += delta_time,
+        //     KeyCode::KeyD => self.camera.velocity.x -= delta_time,
+        //     KeyCode::KeyA => self.camera.velocity.x += delta_time,
+        //     KeyCode::Space => self.camera.velocity.y -= delta_time,
+        //     KeyCode::ShiftLeft => self.camera.velocity.y += delta_time,
+        //     _ => {}
+        // }
     }
 }
 
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 struct Uniforms {
     model: Mat4,
     view: Mat4,
     projection: Mat4,
     color: Vec4,
+    camera_world_position: Vec3,
     time: f32,
-    _padding: [f32; 3],
 }
 
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 struct LightUniforms {
     directions: [Vec4; 2],
     colors: [Vec4; 2],
+    hardness: f32,
+    diffuse: f32,
+    specular: f32,
+    _padding: f32,
 }
 
 #[derive(Clone, Copy, Default)]
 struct Camera {
-    rotation: Quat,
-    translation: Vec3,
-    velocity: Vec3,
+    orbit_radius: f32,
+    yaw: f32,
+    pitch: f32,
 }
 
 impl Camera {
+    fn get_translation(&self) -> Vec3 {
+        Quat::from_rotation_y(self.yaw)
+            * Quat::from_rotation_x(self.pitch)
+            * Vec3::Z
+            * self.orbit_radius
+    }
     fn get_view_matrix(&self) -> Mat4 {
-        Mat4::from_rotation_translation(self.rotation, self.translation)
+        Mat4::look_at_lh(self.get_translation(), Vec3::ZERO, Vec3::Y)
     }
 }
 

@@ -53,7 +53,7 @@ impl BindGroup {
             label: Some("Uniform Bind Group Layout"),
             entries: &layout_entries,
         });
-        let mut binding = 0;
+        binding = 0;
         let mut bind_group_entries = vec![];
 
         for uniforms in uniform_buffers {
