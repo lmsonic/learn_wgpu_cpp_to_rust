@@ -11,7 +11,7 @@ use std::{
 };
 
 use egui_wgpu::ScreenDescriptor;
-use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
+use glam::{Mat4, Quat, Vec3, Vec4};
 
 use winit::{
     dpi::{PhysicalPosition, PhysicalSize},
@@ -38,6 +38,7 @@ pub struct ApplicationState {
     wgpu: WgpuContext,
     depth_texture: Texture,
     texture: Texture,
+    normal_texture: Texture,
     vertex_buffer: VertexBuffer<VertexAttribute>,
     uniforms: UniformBuffer<Uniforms>,
     bind_group: BindGroup,
@@ -59,6 +60,7 @@ impl ApplicationState {
         let wgpu = WgpuContext::new(window);
         let depth_texture = Texture::depth(&wgpu.device, size.width, size.height);
         let texture = Texture::new("resources/fourareen/fourareen2K_albedo.jpg", &wgpu);
+        let normal_texture = Texture::new("resources/fourareen/fourareen2K_normals.png", &wgpu);
 
         let vertices = load_geometry("resources/fourareen/fourareen.obj");
         let vertex_buffer = VertexBuffer::new(vertices, &wgpu.device);
@@ -78,6 +80,8 @@ impl ApplicationState {
             color: Vec4::new(0.0, 1.0, 0.4, 1.0),
             time: start_time.elapsed().as_secs_f32(),
             camera_world_position: camera.get_translation(),
+            normal_map_strength: 0.5,
+            ..Default::default()
         };
         let uniform_buffer = UniformBuffer::new(uniforms, &wgpu.device);
 
@@ -96,7 +100,7 @@ impl ApplicationState {
         let bind_group = BindGroup::new(
             &wgpu.device,
             &[&uniform_buffer.buffer, &light_uniforms.buffer],
-            &[&texture],
+            &[&texture, &normal_texture],
         );
         let render_pipeline = render_pipeline::RenderPipeline::new::<VertexAttribute>(
             &wgpu.device,
@@ -114,10 +118,22 @@ impl ApplicationState {
             window,             // winit Window
         );
 
+        let gui_state = GuiState {
+            clear_color: [0.05, 0.05, 0.05],
+            light_color1: light_uniforms.data.colors[0].truncate().to_array(),
+            light_color2: light_uniforms.data.colors[1].truncate().to_array(),
+            light_direction1: light_uniforms.data.directions[0],
+            light_direction2: light_uniforms.data.directions[1],
+            hardness: light_uniforms.data.hardness,
+            diffuse: light_uniforms.data.diffuse,
+            specular: light_uniforms.data.specular,
+            normal_strength: uniform_buffer.data.normal_map_strength,
+        };
         Self {
             wgpu,
             depth_texture,
             texture,
+            normal_texture,
             vertex_buffer,
             uniforms: uniform_buffer,
             bind_group,
@@ -129,16 +145,7 @@ impl ApplicationState {
             drag: false,
             egui,
             window: window.clone(),
-            gui_state: GuiState {
-                clear_color: [0.05, 0.05, 0.05],
-                light_color1: light_uniforms.data.colors[0].truncate().to_array(),
-                light_color2: light_uniforms.data.colors[1].truncate().to_array(),
-                light_direction1: light_uniforms.data.directions[0],
-                light_direction2: light_uniforms.data.directions[1],
-                hardness: light_uniforms.data.hardness,
-                diffuse: light_uniforms.data.diffuse,
-                specular: light_uniforms.data.specular,
-            },
+            gui_state,
             light_uniforms,
         }
     }
@@ -234,6 +241,7 @@ impl ApplicationState {
             specular: self.gui_state.specular,
             _padding: Default::default(),
         };
+        self.uniforms.data.normal_map_strength = self.gui_state.normal_strength;
 
         let command = encoder.finish();
 
@@ -311,6 +319,8 @@ struct Uniforms {
     color: Vec4,
     camera_world_position: Vec3,
     time: f32,
+    normal_map_strength: f32,
+    _padding: [f32; 3],
 }
 
 #[derive(Debug, Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]

@@ -1,6 +1,6 @@
 use std::{fmt::Debug, path::Path};
 
-use glam::{Vec2, Vec3};
+use glam::{Mat3, Vec2, Vec3};
 use image::DynamicImage;
 
 const fn bit_width(x: u32) -> u32 {
@@ -124,16 +124,41 @@ pub fn write_mipmaps(queue: &wgpu::Queue, texture: &wgpu::Texture, image: Dynami
 #[repr(C)]
 pub struct VertexAttribute {
     pub position: Vec3,
+    pub tangent: Vec3,
+    pub bitangent: Vec3,
     pub normal: Vec3,
     pub color: Vec3,
     pub uv: Vec2,
 }
 
+fn compute_tangent_frame(face: [VertexAttribute; 3], expected_normal: Vec3) -> (Vec3, Vec3) {
+    let e1_pos = face[1].position - face[0].position;
+    let e2_pos = face[2].position - face[0].position;
+
+    let e1_uv = face[1].uv - face[0].uv;
+    let e2_uv = face[2].uv - face[0].uv;
+
+    let mut tangent = (e1_pos * e2_uv.y - e2_pos * e1_uv.y).normalize();
+    let mut bitangent = (e2_pos * e1_uv.x - e1_pos * e2_uv.x).normalize();
+    let mut normal = tangent.cross(bitangent);
+
+    if normal.dot(expected_normal) < 0.0 {
+        tangent = -tangent;
+        bitangent = -bitangent;
+        normal = -normal;
+    }
+
+    normal = expected_normal;
+    tangent = (tangent - tangent.dot(normal) * normal).normalize();
+    bitangent = normal.cross(tangent);
+
+    (tangent, bitangent)
+}
+
 impl VertexAttributeLayout for VertexAttribute {
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         use std::mem;
-        const ATTRIBUTES: [wgpu::VertexAttribute; 4] =
-            wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3,2=>Float32x3,3=>Float32x2];
+        const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3,2=>Float32x3,3=>Float32x3,4=>Float32x3,5=>Float32x2];
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -161,45 +186,66 @@ pub fn load_geometry(path: impl AsRef<Path> + Debug) -> Vec<VertexAttribute> {
     for model in &models {
         let mesh = &model.mesh;
         vertices.reserve(mesh.indices.len());
-        for index in &mesh.indices {
-            let i = *index as usize;
-            vertices.push(VertexAttribute {
-                position: Vec3::new(
-                    mesh.positions[i * 3],
+        for i in &mesh.indices {
+            let i = *i as usize;
+            let position = Vec3::new(
+                mesh.positions[i * 3],
+                // Z is up
+                mesh.positions[i * 3 + 1],
+                mesh.positions[i * 3 + 2],
+            );
+            let normal = if mesh.normals.is_empty() {
+                Vec3::ZERO
+            } else {
+                Vec3::new(
+                    mesh.normals[i * 3],
                     // Z is up
-                    mesh.positions[i * 3 + 1],
-                    mesh.positions[i * 3 + 2],
-                ),
-                normal: if mesh.normals.is_empty() {
-                    Vec3::ZERO
-                } else {
-                    Vec3::new(
-                        mesh.normals[i * 3],
-                        // Z is up
-                        mesh.normals[i * 3 + 1],
-                        mesh.normals[i * 3 + 2],
-                    )
-                },
-                color: if mesh.vertex_color.is_empty() {
-                    Vec3::ONE
-                } else {
-                    Vec3::new(
-                        mesh.vertex_color[i * 3],
-                        mesh.vertex_color[i * 3 + 1],
-                        mesh.vertex_color[i * 3 + 2],
-                    )
-                },
-                uv: if mesh.texcoords.is_empty() {
-                    Vec2::ZERO
-                } else {
-                    Vec2::new(
-                        mesh.texcoords[i * 2],
-                        // Modern graphics APIs use a different UV coordinate system than the OBJ file format.
-                        1.0 - mesh.texcoords[i * 2 + 1],
-                    )
-                },
+                    mesh.normals[i * 3 + 1],
+                    mesh.normals[i * 3 + 2],
+                )
+            };
+            let color = if mesh.vertex_color.is_empty() {
+                Vec3::ONE
+            } else {
+                Vec3::new(
+                    mesh.vertex_color[i * 3],
+                    mesh.vertex_color[i * 3 + 1],
+                    mesh.vertex_color[i * 3 + 2],
+                )
+            };
+            let uv = if mesh.texcoords.is_empty() {
+                Vec2::ZERO
+            } else {
+                Vec2::new(
+                    mesh.texcoords[i * 2],
+                    // Modern graphics APIs use a different UV coordinate system than the OBJ file format.
+                    1.0 - mesh.texcoords[i * 2 + 1],
+                )
+            };
+
+            vertices.push(VertexAttribute {
+                position,
+                normal,
+                color,
+                uv,
+                tangent: Vec3::ZERO,
+                bitangent: Vec3::ZERO,
             });
         }
     }
+
+    let triangle_count = vertices.len() / 3;
+    for i in 0..triangle_count {
+        let v1 = vertices[i * 3];
+        let v2 = vertices[i * 3 + 1];
+        let v3 = vertices[i * 3 + 2];
+        for j in 0..3 {
+            let v = &mut vertices[i * 3 + j];
+            let (tangent, bitangent) = compute_tangent_frame([v1, v2, v3], v.normal);
+            v.tangent = tangent;
+            v.bitangent = bitangent;
+        }
+    }
+
     vertices
 }
