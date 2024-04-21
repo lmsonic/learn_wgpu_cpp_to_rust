@@ -30,6 +30,31 @@ where
         }
     }
 }
+pub struct IndexBuffer {
+    pub(crate) indices: Vec<u32>,
+    // indices: Vec<u32>,
+    pub(crate) buffer: wgpu::Buffer,
+}
+
+impl IndexBuffer {
+    pub(crate) fn new(indices: Vec<u32>, device: &wgpu::Device) -> Self {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::INDEX,
+        });
+        // let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        //     label: Some("Index Buffer"),
+        //     contents: bytemuck::cast_slice(&indices),
+        //     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::INDEX,
+        // });
+        Self {
+            indices,
+            // indices,
+            buffer,
+        }
+    }
+}
 
 pub struct UniformBuffer<T> {
     pub(crate) data: T,

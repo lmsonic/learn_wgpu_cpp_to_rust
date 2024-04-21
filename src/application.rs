@@ -30,7 +30,7 @@ mod buffer;
 
 use self::{
     bind_group::BindGroup,
-    buffer::{UniformBuffer, VertexBuffer},
+    buffer::{IndexBuffer, UniformBuffer, VertexBuffer},
     texture::Texture,
     wgpu_context::WgpuContext,
 };
@@ -40,6 +40,7 @@ pub struct ApplicationState {
     texture: Texture,
     normal_texture: Texture,
     vertex_buffer: VertexBuffer<VertexAttribute>,
+    index_buffer: IndexBuffer,
     uniforms: UniformBuffer<Uniforms>,
     bind_group: BindGroup,
     render_pipeline: render_pipeline::RenderPipeline,
@@ -62,8 +63,9 @@ impl ApplicationState {
         let texture = Texture::new("resources/fourareen/fourareen2K_albedo.jpg", &wgpu);
         let normal_texture = Texture::new("resources/fourareen/fourareen2K_normals.png", &wgpu);
 
-        let vertices = load_geometry("resources/fourareen/fourareen.obj");
+        let (vertices, indices) = load_geometry("resources/fourareen/fourareen.obj");
         let vertex_buffer = VertexBuffer::new(vertices, &wgpu.device);
+        let index_buffer = IndexBuffer::new(indices, &wgpu.device);
 
         let start_time = time::Instant::now();
         let aspect = size.width as f32 / size.height as f32;
@@ -135,6 +137,7 @@ impl ApplicationState {
             texture,
             normal_texture,
             vertex_buffer,
+            index_buffer,
             uniforms: uniform_buffer,
             bind_group,
             render_pipeline,
@@ -208,10 +211,12 @@ impl ApplicationState {
 
             render_pass.set_pipeline(&self.render_pipeline.render_pipeline);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.buffer.slice(..));
-            // render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.set_index_buffer(
+                self.index_buffer.buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
             render_pass.set_bind_group(0, &self.bind_group.bind_group, &[]);
-
-            render_pass.draw(0..self.vertex_buffer.vertices.len() as u32, 0..1);
+            render_pass.draw_indexed(0..self.index_buffer.indices.len() as u32, 0, 0..1);
         }
         let screen_descriptor = ScreenDescriptor {
             size_in_pixels: [self.wgpu.config.width, self.wgpu.config.height],

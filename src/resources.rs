@@ -171,7 +171,7 @@ pub trait VertexAttributeLayout {
     fn layout() -> wgpu::VertexBufferLayout<'static>;
 }
 
-pub fn load_geometry(path: impl AsRef<Path> + Debug) -> Vec<VertexAttribute> {
+pub fn load_geometry(path: impl AsRef<Path> + Debug) -> (Vec<VertexAttribute>, Vec<u32>) {
     let (models, _) = tobj::load_obj(
         path,
         &tobj::LoadOptions {
@@ -183,69 +183,67 @@ pub fn load_geometry(path: impl AsRef<Path> + Debug) -> Vec<VertexAttribute> {
     )
     .expect("Failed to OBJ load file");
     let mut vertices = vec![];
+    let mut indices: Vec<u32> = vec![];
     for model in &models {
         let mesh = &model.mesh;
-        vertices.reserve(mesh.indices.len());
-        for i in &mesh.indices {
-            let i = *i as usize;
-            let position = Vec3::new(
-                mesh.positions[i * 3],
-                // Z is up
-                mesh.positions[i * 3 + 1],
-                mesh.positions[i * 3 + 2],
-            );
-            let normal = if mesh.normals.is_empty() {
-                Vec3::ZERO
-            } else {
-                Vec3::new(
-                    mesh.normals[i * 3],
-                    // Z is up
-                    mesh.normals[i * 3 + 1],
-                    mesh.normals[i * 3 + 2],
-                )
-            };
-            let color = if mesh.vertex_color.is_empty() {
-                Vec3::ONE
-            } else {
-                Vec3::new(
-                    mesh.vertex_color[i * 3],
-                    mesh.vertex_color[i * 3 + 1],
-                    mesh.vertex_color[i * 3 + 2],
-                )
-            };
-            let uv = if mesh.texcoords.is_empty() {
-                Vec2::ZERO
-            } else {
-                Vec2::new(
-                    mesh.texcoords[i * 2],
-                    // Modern graphics APIs use a different UV coordinate system than the OBJ file format.
-                    1.0 - mesh.texcoords[i * 2 + 1],
-                )
-            };
-
-            vertices.push(VertexAttribute {
-                position,
-                normal,
-                color,
-                uv,
-                tangent: Vec3::ZERO,
-                bitangent: Vec3::ZERO,
-            });
+        indices.extend(&mesh.indices);
+        let mut positions = Vec::with_capacity(mesh.positions.len() / 3);
+        for p in mesh.positions.chunks_exact(3) {
+            positions.push(Vec3::new(p[0], p[1], p[2]));
         }
+
+        let normals = if mesh.normals.is_empty() {
+            vec![Vec3::ZERO; positions.len()]
+        } else {
+            let mut normals = Vec::with_capacity(positions.len());
+            for n in mesh.normals.chunks_exact(3) {
+                normals.push(Vec3::new(n[0], n[1], n[2]));
+            }
+            normals
+        };
+        let colors = if mesh.vertex_color.is_empty() {
+            vec![Vec3::ZERO; positions.len()]
+        } else {
+            let mut colors = Vec::with_capacity(positions.len());
+            for c in mesh.vertex_color.chunks_exact(3) {
+                colors.push(Vec3::new(c[0], c[1], c[2]));
+            }
+            colors
+        };
+
+        let uvs = if mesh.texcoords.is_empty() {
+            vec![Vec2::ZERO; positions.len()]
+        } else {
+            let mut uvs = Vec::with_capacity(mesh.texcoords.len());
+            for uv in mesh.texcoords.chunks_exact(2) {
+                uvs.push(Vec2::new(uv[0], 1.0 - uv[1]));
+            }
+            uvs
+        };
+
+        vertices.extend(positions.into_iter().zip(normals).zip(colors).zip(uvs).map(
+            |(((p, n), c), t)| VertexAttribute {
+                position: p,
+                tangent: Vec3::Y,
+                bitangent: Vec3::Z,
+                normal: n,
+                color: c,
+                uv: t,
+            },
+        ));
     }
 
-    let triangle_count = vertices.len() / 3;
-    for i in 0..triangle_count {
-        let v1 = vertices[i * 3];
-        let v2 = vertices[i * 3 + 1];
-        let v3 = vertices[i * 3 + 2];
+    for i in indices.chunks_exact(3) {
+        let v1 = vertices[i[0] as usize];
+        let v2 = vertices[i[1] as usize];
+        let v3 = vertices[i[2] as usize];
         for j in 0..3 {
-            let v = &mut vertices[i * 3 + j];
+            let v = &mut vertices[i[j] as usize];
             let (tangent, bitangent) = compute_tangent_frame([v1, v2, v3], v.normal);
             v.tangent = tangent;
             v.bitangent = bitangent;
         }
     }
 
-    vertices
+    (vertices, indices)
 }
