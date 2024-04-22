@@ -84,6 +84,7 @@ impl ApplicationState {
             time: start_time.elapsed().as_secs_f32(),
             camera_world_position: camera.get_translation(),
             normal_map_strength: 0.5,
+            mip_level: 0.0,
             ..Default::default()
         };
         let uniform_buffer = DataBuffer::uniform(uniforms, &wgpu.device);
@@ -131,8 +132,10 @@ impl ApplicationState {
             diffuse: light_uniforms.data.diffuse,
             specular: light_uniforms.data.specular,
             normal_strength: uniform_buffer.data.normal_map_strength,
+            mip_level: uniform_buffer.data.mip_level,
         };
-        let mut app = Self {
+
+        Self {
             wgpu,
             depth_texture,
             texture,
@@ -151,8 +154,7 @@ impl ApplicationState {
             window: window.clone(),
             gui_state,
             light_uniforms,
-        };
-        app
+        }
     }
 
     pub fn update(&mut self) {
@@ -248,6 +250,7 @@ impl ApplicationState {
             _padding: Default::default(),
         };
         self.uniforms.data.normal_map_strength = self.gui_state.normal_strength;
+        self.uniforms.data.mip_level = self.gui_state.mip_level;
 
         let command = encoder.finish();
 
@@ -312,7 +315,8 @@ struct Uniforms {
     camera_world_position: Vec3,
     time: f32,
     normal_map_strength: f32,
-    _padding: [f32; 3],
+    mip_level: f32,
+    _padding: [f32; 2],
 }
 
 #[derive(Debug, Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]

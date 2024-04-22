@@ -24,7 +24,8 @@ struct Uniforms {
     color: vec4f,
     camera_world_position: vec3f,
     time: f32,
-    normal_map_strength:f32
+    normal_map_strength:f32,
+    mip_level:f32
 };
 
 struct LightUniforms{
@@ -51,14 +52,15 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.tangent = (uniforms.model * vec4f(in.tangent,0.0)).xyz;
     out.bitangent = (uniforms.model * vec4f(in.bitangent,0.0)).xyz;
     out.normal = (uniforms.model * vec4f(in.normal,0.0)).xyz;
-    out.uv = in.uv;
+    out.uv = in.uv ;
     out.view_direction = uniforms.camera_world_position - world_position.xyz;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-    let normal_map = textureSample(normal_texture,normal_sampler,in.uv).rgb;
+    
+    let normal_map = textureSampleLevel(normal_texture,normal_sampler,in.uv,uniforms.mip_level).rgb;
     let tangent_normal = normal_map * 2.0 - 1.0;
     let tangent_to_world = mat3x3f(
         normalize(in.tangent),
@@ -70,7 +72,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let V = normalize(in.view_direction);
     var shading = vec3f(0.0);
 
-    let base_color = textureSample(texture,texture_sampler,in.uv).rgb;
+    let base_color = textureSampleLevel(texture,texture_sampler,in.uv,uniforms.mip_level).rgb;
 
 
     for (var i:i32 = 0 ; i<2 ; i++){

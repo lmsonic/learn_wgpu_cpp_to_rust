@@ -24,6 +24,7 @@ pub struct GuiState {
     pub diffuse: f32,
     pub specular: f32,
     pub normal_strength: f32,
+    pub mip_level: f32,
 }
 
 impl GuiState {
@@ -60,6 +61,9 @@ impl GuiState {
 
                 ui.label("Normal Strenght");
                 ui.add(egui::Slider::new(&mut self.normal_strength, 0.0..=1.0));
+
+                ui.label("Mip Level");
+                ui.add(egui::Slider::new(&mut self.mip_level, 0.0..=12.0));
 
                 ui.label(format!(
                     "Application average {} ms/frame {:.3}",
