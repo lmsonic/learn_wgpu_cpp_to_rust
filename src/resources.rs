@@ -219,6 +219,19 @@ pub fn load_texture_compute(
 
     queue.submit([command]);
 
+    // for level in 1..mip_level_count {
+    //     save_texture(
+    //         format!(
+    //             "{}_mip{level}.png",
+    //             path.as_ref().with_extension("").display()
+    //         ),
+    //         &texture,
+    //         device,
+    //         queue,
+    //         level,
+    //     );
+    // }
+
     let view = texture.create_view(&wgpu::TextureViewDescriptor {
         label: None,
         format: Some(texture.format()),
