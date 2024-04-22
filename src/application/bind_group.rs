@@ -6,6 +6,83 @@ pub struct BindGroup {
 }
 
 impl BindGroup {
+    pub(crate) fn new_compute(
+        device: &wgpu::Device,
+        input_buffers: &[&wgpu::Buffer],
+        output_buffers: &[&wgpu::Buffer],
+    ) -> Self {
+        let mut layout_entries = vec![];
+        let mut binding = 0;
+        for _ in input_buffers {
+            layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            });
+            binding += 1;
+        }
+
+        for _ in output_buffers {
+            layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            });
+            binding += 1;
+        }
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Uniform Bind Group Layout"),
+            entries: &layout_entries,
+        });
+        binding = 0;
+        let mut bind_group_entries = vec![];
+
+        for input_buffer in input_buffers {
+            bind_group_entries.push(wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: input_buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            });
+            binding += 1;
+        }
+
+        for output_buffer in output_buffers {
+            bind_group_entries.push(wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: output_buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            });
+            binding += 1;
+        }
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Uniform Bind Group Layout"),
+
+            layout: &bind_group_layout,
+            entries: &bind_group_entries,
+        });
+        Self {
+            bind_group_layout,
+            bind_group,
+        }
+    }
     pub(crate) fn new(
         device: &wgpu::Device,
         uniform_buffers: &[&wgpu::Buffer],

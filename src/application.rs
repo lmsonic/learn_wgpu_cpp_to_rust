@@ -10,9 +10,12 @@ use std::{
     time::{self, Duration, Instant},
 };
 
+use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 use egui_wgpu::ScreenDescriptor;
 use glam::{Mat4, Quat, Vec3, Vec4};
 
+use pollster::FutureExt;
+use tracing::info;
 use winit::{
     dpi::{PhysicalPosition, PhysicalSize},
     event::{ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
@@ -30,7 +33,7 @@ mod buffer;
 
 use self::{
     bind_group::BindGroup,
-    buffer::{IndexBuffer, UniformBuffer, VertexBuffer},
+    buffer::{DataBuffer, IndexBuffer, UninitBuffer, VertexBuffer},
     texture::Texture,
     wgpu_context::WgpuContext,
 };
@@ -41,9 +44,11 @@ pub struct ApplicationState {
     normal_texture: Texture,
     vertex_buffer: VertexBuffer<VertexAttribute>,
     index_buffer: IndexBuffer,
-    uniforms: UniformBuffer<Uniforms>,
+    uniforms: DataBuffer<Uniforms>,
     bind_group: BindGroup,
     render_pipeline: render_pipeline::RenderPipeline,
+    compute_pipeline: wgpu::ComputePipeline,
+    compute_bind_group: BindGroup,
     start_time: Instant,
     delta_time: Duration,
     camera: Camera,
@@ -52,10 +57,14 @@ pub struct ApplicationState {
     egui: EguiRenderer,
     window: Arc<Window>,
     gui_state: GuiState,
-    light_uniforms: UniformBuffer<LightUniforms>,
+    light_uniforms: DataBuffer<LightUniforms>,
+    input_buffer: DataBuffer<Vec<f32>>,
+    output_buffer: UninitBuffer,
+    map_buffer: UninitBuffer,
 }
 
 impl ApplicationState {
+    #[allow(clippy::too_many_lines)]
     pub fn new(window: &Arc<Window>) -> Self {
         let size = window.inner_size();
         let wgpu = WgpuContext::new(window);
@@ -85,9 +94,9 @@ impl ApplicationState {
             normal_map_strength: 0.5,
             ..Default::default()
         };
-        let uniform_buffer = UniformBuffer::new(uniforms, &wgpu.device);
+        let uniform_buffer = DataBuffer::uniform(uniforms, &wgpu.device);
 
-        let light_uniforms = UniformBuffer::new(
+        let light_uniforms = DataBuffer::uniform(
             LightUniforms {
                 directions: [[0.5, -0.9, 0.1, 0.0].into(), [0.2, 0.4, 0.3, 0.0].into()],
                 colors: [[1.0, 0.9, 0.6, 1.0].into(), [0.6, 0.9, 1.0, 1.0].into()],
@@ -111,7 +120,54 @@ impl ApplicationState {
             wgpu.config.format,
             wgpu::include_wgsl!("shader.wgsl"),
         );
+        let mut input: Vec<f32> = vec![0.0; 64];
+        for (i, x) in input.iter_mut().enumerate() {
+            *x = 0.1 * i as f32;
+        }
+        let size = input.len() as u64;
+        let input_buffer = DataBuffer::from_slice(
+            input,
+            &wgpu.device,
+            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+        );
 
+        let output_buffer = UninitBuffer::new(
+            &wgpu.device,
+            size,
+            wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::STORAGE,
+        );
+
+        let map_buffer = UninitBuffer::new(
+            &wgpu.device,
+            size,
+            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        );
+
+        let compute_bind_group = BindGroup::new_compute(
+            &wgpu.device,
+            &[&input_buffer.buffer],
+            &[&output_buffer.buffer],
+        );
+        let compute_shader = wgpu
+            .device
+            .create_shader_module(wgpu::include_wgsl!("compute.wgsl"));
+
+        let compute_pipeline_layout =
+            wgpu.device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Compute Pipeline Layout"),
+                    bind_group_layouts: &[&compute_bind_group.bind_group_layout],
+                    push_constant_ranges: &[],
+                });
+
+        let compute_pipeline =
+            wgpu.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("Compute Pipeline"),
+                    layout: Some(&compute_pipeline_layout),
+                    module: &compute_shader,
+                    entry_point: "compute",
+                });
         let egui = EguiRenderer::new(
             &wgpu.device,       // wgpu Device
             wgpu.config.format, // TextureFormat
@@ -131,7 +187,7 @@ impl ApplicationState {
             specular: light_uniforms.data.specular,
             normal_strength: uniform_buffer.data.normal_map_strength,
         };
-        Self {
+        let mut app = Self {
             wgpu,
             depth_texture,
             texture,
@@ -150,7 +206,14 @@ impl ApplicationState {
             window: window.clone(),
             gui_state,
             light_uniforms,
-        }
+            compute_pipeline,
+            compute_bind_group,
+            input_buffer,
+            output_buffer,
+            map_buffer,
+        };
+        app.compute();
+        app
     }
 
     pub fn update(&mut self) {
@@ -164,7 +227,6 @@ impl ApplicationState {
         self.uniforms.update(&self.wgpu.queue);
 
         self.light_uniforms.update(&self.wgpu.queue);
-
         self.render();
 
         let end_frame_time = time::Instant::now();
@@ -253,6 +315,61 @@ impl ApplicationState {
         self.wgpu.queue.submit([command]);
 
         output.present();
+    }
+
+    pub fn compute(&mut self) {
+        let mut encoder = self
+            .wgpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("ComputeP Pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&self.compute_pipeline);
+            compute_pass.set_bind_group(0, &self.compute_bind_group.bind_group, &[]);
+
+            let invocation_count = 64;
+            let workgroup_size = 32;
+            // This ceils invocation_count / workgroup_size
+            let workgroup_count = (invocation_count + workgroup_size - 1) / workgroup_size;
+            compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
+        }
+
+        // Copy the memory from the output buffer that lies in the storage part of the
+        // memory to the map buffer, which is in the "mappable" part of the memory.
+        encoder.copy_buffer_to_buffer(
+            &self.output_buffer.buffer,
+            0,
+            &self.map_buffer.buffer,
+            0,
+            self.output_buffer.buffer.size(),
+        );
+        let command = encoder.finish();
+
+        self.wgpu.queue.submit([command]);
+
+        let (sender, receiver) = futures_channel::oneshot::channel();
+        self.map_buffer
+            .buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, |result| {
+                let _ = sender.send(result);
+            });
+        self.wgpu.device.poll(wgpu::Maintain::Wait);
+        receiver
+            .block_on()
+            .expect("communication failed")
+            .expect("buffer reading failed");
+        let slice: &[u8] = &self.map_buffer.buffer.slice(..).get_mapped_range();
+
+        let slice = slice
+            .chunks_exact(4)
+            .map(|mut b: &[u8]| b.read_f32::<LittleEndian>().unwrap());
+        for (i, x) in slice.into_iter().enumerate() {
+            info!("{} became {x}", self.input_buffer.data[i]);
+        }
     }
 
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
