@@ -1,6 +1,6 @@
 use std::{fmt::Debug, path::Path};
 
-use glam::{Mat3, Vec2, Vec3};
+use glam::{Vec2, Vec3};
 use image::DynamicImage;
 
 const fn bit_width(x: u32) -> u32 {

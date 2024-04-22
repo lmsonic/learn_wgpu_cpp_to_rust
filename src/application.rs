@@ -10,7 +10,7 @@ use std::{
     time::{self, Duration, Instant},
 };
 
-use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt};
 use egui_wgpu::ScreenDescriptor;
 use glam::{Mat4, Quat, Vec3, Vec4};
 
@@ -33,7 +33,7 @@ mod buffer;
 
 use self::{
     bind_group::BindGroup,
-    buffer::{DataBuffer, IndexBuffer, UninitBuffer, VertexBuffer},
+    buffer::{Buffer, DataBuffer, IndexBuffer, VertexBuffer},
     texture::Texture,
     wgpu_context::WgpuContext,
 };
@@ -59,8 +59,8 @@ pub struct ApplicationState {
     gui_state: GuiState,
     light_uniforms: DataBuffer<LightUniforms>,
     input_buffer: DataBuffer<Vec<f32>>,
-    output_buffer: UninitBuffer,
-    map_buffer: UninitBuffer,
+    output_buffer: Buffer,
+    map_buffer: Buffer,
 }
 
 impl ApplicationState {
@@ -124,22 +124,22 @@ impl ApplicationState {
         for (i, x) in input.iter_mut().enumerate() {
             *x = 0.1 * i as f32;
         }
-        let size = input.len() as u64;
+        let len = input.len() as u64;
         let input_buffer = DataBuffer::from_slice(
             input,
             &wgpu.device,
             wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
         );
 
-        let output_buffer = UninitBuffer::new(
+        let output_buffer = Buffer::new(
             &wgpu.device,
-            size,
+            len,
             wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::STORAGE,
         );
 
-        let map_buffer = UninitBuffer::new(
+        let map_buffer = Buffer::new(
             &wgpu.device,
-            size,
+            len,
             wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         );
 
@@ -415,21 +415,7 @@ impl ApplicationState {
         }
     }
 
-    fn key_input(&mut self, event: KeyCode) {
-        if self.drag {
-            return;
-        }
-        // let delta_time = self.delta_time.as_secs_f32();
-        // match event {
-        //     KeyCode::KeyW => self.camera.velocity.z -= delta_time,
-        //     KeyCode::KeyS => self.camera.velocity.z += delta_time,
-        //     KeyCode::KeyD => self.camera.velocity.x -= delta_time,
-        //     KeyCode::KeyA => self.camera.velocity.x += delta_time,
-        //     KeyCode::Space => self.camera.velocity.y -= delta_time,
-        //     KeyCode::ShiftLeft => self.camera.velocity.y += delta_time,
-        //     _ => {}
-        // }
-    }
+    fn key_input(&mut self, event: KeyCode) {}
 }
 
 #[derive(Debug, Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]

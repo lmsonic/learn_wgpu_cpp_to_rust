@@ -1,4 +1,4 @@
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::PI;
 use std::time::Duration;
 
 use egui::epaint::Shadow;
@@ -8,8 +8,7 @@ use egui_wgpu::ScreenDescriptor;
 
 use egui_winit::State;
 
-use glam::{vec2, vec3, DVec3, Vec2, Vec3, Vec4, Vec4Swizzles};
-use tracing_subscriber::fmt::format;
+use glam::{Vec2, Vec3, Vec4};
 use wgpu::{CommandEncoder, Device, Queue, TextureFormat, TextureView};
 use winit::event::WindowEvent;
 use winit::window::Window;
@@ -34,7 +33,7 @@ impl GuiState {
             .resizable(true)
             .vscroll(true)
             .default_open(false)
-            .show(&ui, |ui| {
+            .show(ui, |ui| {
                 ui.label("Clear Color");
                 ui.color_edit_button_rgb(&mut self.clear_color);
 
@@ -79,7 +78,7 @@ fn drag_direction(ui: &mut Ui, v: &mut Vec4) {
     });
     polar.x = polar.x.clamp(-PI * 0.5, PI * 0.5);
     polar.y = polar.y.clamp(-PI * 0.5, PI * 0.5);
-    *v = polar_to_cartesian(&polar).extend(0.0);
+    *v = polar_to_cartesian(polar).extend(0.0);
 }
 
 fn cartesian_to_polar(cartesian: Vec3) -> Vec2 {
@@ -91,7 +90,7 @@ fn cartesian_to_polar(cartesian: Vec3) -> Vec2 {
     }
 }
 
-fn polar_to_cartesian(polar: &Vec2) -> Vec3 {
+fn polar_to_cartesian(polar: Vec2) -> Vec3 {
     let latitude = polar.x;
     let longitude = polar.y;
     Vec3 {

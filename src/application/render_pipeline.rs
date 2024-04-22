@@ -1,4 +1,4 @@
-use std::{fmt::Debug, mem};
+use std::fmt::Debug;
 
 use crate::resources::VertexAttributeLayout;
 

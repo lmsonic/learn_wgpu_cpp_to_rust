@@ -114,11 +114,11 @@ impl<T> DataBuffer<T> {
     }
 }
 
-pub struct UninitBuffer {
+pub struct Buffer {
     pub(crate) buffer: wgpu::Buffer,
 }
 
-impl UninitBuffer {
+impl Buffer {
     pub(crate) fn new(device: &wgpu::Device, size: u64, usage: wgpu::BufferUsages) -> Self
 where {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
