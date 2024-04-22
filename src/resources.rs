@@ -1,7 +1,16 @@
+use std::io::Cursor;
 use std::{fmt::Debug, path::Path};
 
+use byteorder::ReadBytesExt;
+use egui::Image;
 use glam::{Vec2, Vec3};
-use image::DynamicImage;
+use image::{save_buffer, save_buffer_with_format, DynamicImage};
+use pollster::FutureExt;
+use tracing_subscriber::fmt::format;
+use wgpu::Extent3d;
+
+use crate::application::bind_group::BindGroup;
+use crate::application::buffer::Buffer;
 
 const fn bit_width(x: u32) -> u32 {
     if x == 0 {
@@ -47,6 +56,186 @@ pub fn load_texture(
         array_layer_count: Some(1),
     });
     Ok((texture, view))
+}
+
+pub fn load_texture_compute(
+    path: impl AsRef<Path>,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> image::ImageResult<(wgpu::Texture, wgpu::TextureView)> {
+    let image = image::open(&path)?;
+    let label = path.as_ref().to_str();
+    let texture_label = label.map(|s| format!("{s} Texture"));
+
+    let texture_descriptor = wgpu::TextureDescriptor {
+        label: texture_label.as_deref(),
+        size: wgpu::Extent3d {
+            width: image.width(),
+            height: image.height(),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 2,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    };
+
+    let texture = device.create_texture(&texture_descriptor);
+
+    let destination = wgpu::ImageCopyTextureBase {
+        texture: &texture,
+        mip_level: 0,
+        origin: wgpu::Origin3d::ZERO,
+        aspect: wgpu::TextureAspect::All,
+    };
+    let source = wgpu::ImageDataLayout {
+        offset: 0,
+        bytes_per_row: Some(4 * texture.size().width),
+        rows_per_image: Some(texture.size().height),
+    };
+    let data = image.into_rgba8().into_raw();
+    queue.write_texture(destination, &data, source, texture.size());
+
+    let input_view = texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("Input View"),
+        format: Some(texture.format()),
+        dimension: Some(wgpu::TextureViewDimension::D2),
+        aspect: wgpu::TextureAspect::All,
+        base_mip_level: 0,
+        mip_level_count: Some(1),
+        base_array_layer: 0,
+        array_layer_count: Some(1),
+    });
+    let output_view = texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("Output View"),
+        format: Some(texture.format()),
+        dimension: Some(wgpu::TextureViewDimension::D2),
+        aspect: wgpu::TextureAspect::All,
+        base_mip_level: 1,
+        mip_level_count: Some(1),
+        base_array_layer: 0,
+        array_layer_count: Some(1),
+    });
+
+    let compute_bind_group =
+        BindGroup::new_compute_texture(device, &[&input_view], &[&output_view]);
+    let compute_shader = device.create_shader_module(wgpu::include_wgsl!("compute.wgsl"));
+
+    let compute_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Compute Pipeline Layout"),
+        bind_group_layouts: &[&compute_bind_group.bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("Compute Pipeline"),
+        layout: Some(&compute_pipeline_layout),
+        module: &compute_shader,
+        entry_point: "compute_mip_map",
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    {
+        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("ComputeP Pass"),
+            timestamp_writes: None,
+        });
+        compute_pass.set_pipeline(&compute_pipeline);
+        compute_pass.set_bind_group(0, &compute_bind_group.bind_group, &[]);
+
+        let invocation_count_x = texture.width();
+        let invocation_count_y = texture.height();
+        let workgroup_size_per_dim = 8;
+        // This ceils invocation_count / workgroup_size
+        let workgroup_count_x =
+            (invocation_count_x + workgroup_size_per_dim - 1) / workgroup_size_per_dim;
+        let workgroup_count_y =
+            (invocation_count_y + workgroup_size_per_dim - 1) / workgroup_size_per_dim;
+        compute_pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
+    }
+
+    let command = encoder.finish();
+
+    queue.submit([command]);
+
+    save_texture(
+        format!("{}_mipmap.png", path.as_ref().with_extension("").display()),
+        &texture,
+        device,
+        queue,
+        1,
+    );
+    Ok((texture, output_view))
+}
+
+fn save_texture(
+    path: impl AsRef<Path>,
+    texture: &wgpu::Texture,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    mip_level: u32,
+) {
+    let width = texture.width() / (1 << mip_level); // pow(mip_level,2)
+    let height = texture.height() / (1 << mip_level);
+    let channels = 4;
+    let component_byte_size = 1;
+    let bytes_per_row = width * channels * component_byte_size;
+    // Special case: WebGPU spec forbids texture-to-buffer copy with a
+    // bytesPerRow lower than 256 so we first copy to a temporary texture.
+    let padded_bytes_per_row = bytes_per_row.max(256);
+    let pixel_buffer = Buffer::new(
+        device,
+        u64::from(padded_bytes_per_row * height),
+        wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+    );
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    let source = wgpu::ImageCopyTextureBase {
+        texture,
+        mip_level,
+        origin: wgpu::Origin3d::ZERO,
+        aspect: wgpu::TextureAspect::All,
+    };
+    let destination = wgpu::ImageCopyBuffer {
+        buffer: &pixel_buffer.buffer,
+        layout: wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(padded_bytes_per_row),
+            rows_per_image: Some(height),
+        },
+    };
+    encoder.copy_texture_to_buffer(
+        source,
+        destination,
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    let command = encoder.finish();
+    queue.submit([command]);
+
+    let (sender, receiver) = futures_channel::oneshot::channel();
+    pixel_buffer
+        .buffer
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, |result| {
+            let _ = sender.send(result);
+        });
+    device.poll(wgpu::Maintain::Wait);
+    receiver
+        .block_on()
+        .expect("communication failed")
+        .expect("buffer reading failed");
+    let pixels: &[u8] = &pixel_buffer.buffer.slice(..).get_mapped_range();
+
+    save_buffer(path, pixels, width, height, image::ExtendedColorType::Rgba8)
+        .expect("Unable to save");
 }
 
 #[allow(clippy::similar_names)]

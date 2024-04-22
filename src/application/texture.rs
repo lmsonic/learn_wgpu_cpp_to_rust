@@ -1,4 +1,4 @@
-use crate::resources::load_texture;
+use crate::resources::{load_texture, load_texture_compute};
 
 use std::path::Path;
 
@@ -12,7 +12,7 @@ pub struct Texture {
 
 impl Texture {
     pub(crate) fn new(path: impl AsRef<Path>, wgpu: &WgpuContext) -> Self {
-        let (texture, view) = load_texture(path, &wgpu.device, &wgpu.queue).unwrap();
+        let (texture, view) = load_texture_compute(path, &wgpu.device, &wgpu.queue).unwrap();
 
         let sampler = wgpu.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Texture"),

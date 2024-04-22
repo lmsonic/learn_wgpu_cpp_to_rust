@@ -1,8 +1,9 @@
 #![allow(clippy::module_name_repetitions)]
-mod bind_group;
-mod render_pipeline;
-mod texture;
-mod wgpu_context;
+pub mod bind_group;
+pub mod buffer;
+pub mod render_pipeline;
+pub mod texture;
+pub mod wgpu_context;
 
 use std::{
     f32::consts::PI,
@@ -10,12 +11,9 @@ use std::{
     time::{self, Duration, Instant},
 };
 
-use byteorder::{LittleEndian, ReadBytesExt};
 use egui_wgpu::ScreenDescriptor;
 use glam::{Mat4, Quat, Vec3, Vec4};
 
-use pollster::FutureExt;
-use tracing::info;
 use winit::{
     dpi::{PhysicalPosition, PhysicalSize},
     event::{ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
@@ -26,10 +24,8 @@ use winit::{
 
 use crate::{
     gui::{EguiRenderer, GuiState},
-    resources::{load_geometry, VertexAttribute},
+    resources::{load_geometry, load_texture_compute, VertexAttribute},
 };
-
-mod buffer;
 
 use self::{
     bind_group::BindGroup,
@@ -47,8 +43,7 @@ pub struct ApplicationState {
     uniforms: DataBuffer<Uniforms>,
     bind_group: BindGroup,
     render_pipeline: render_pipeline::RenderPipeline,
-    compute_pipeline: wgpu::ComputePipeline,
-    compute_bind_group: BindGroup,
+
     start_time: Instant,
     delta_time: Duration,
     camera: Camera,
@@ -58,9 +53,6 @@ pub struct ApplicationState {
     window: Arc<Window>,
     gui_state: GuiState,
     light_uniforms: DataBuffer<LightUniforms>,
-    input_buffer: DataBuffer<Vec<f32>>,
-    output_buffer: Buffer,
-    map_buffer: Buffer,
 }
 
 impl ApplicationState {
@@ -120,54 +112,7 @@ impl ApplicationState {
             wgpu.config.format,
             wgpu::include_wgsl!("shader.wgsl"),
         );
-        let mut input: Vec<f32> = vec![0.0; 64];
-        for (i, x) in input.iter_mut().enumerate() {
-            *x = 0.1 * i as f32;
-        }
-        let len = input.len() as u64;
-        let input_buffer = DataBuffer::from_slice(
-            input,
-            &wgpu.device,
-            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
-        );
 
-        let output_buffer = Buffer::new(
-            &wgpu.device,
-            len,
-            wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::STORAGE,
-        );
-
-        let map_buffer = Buffer::new(
-            &wgpu.device,
-            len,
-            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        );
-
-        let compute_bind_group = BindGroup::new_compute(
-            &wgpu.device,
-            &[&input_buffer.buffer],
-            &[&output_buffer.buffer],
-        );
-        let compute_shader = wgpu
-            .device
-            .create_shader_module(wgpu::include_wgsl!("compute.wgsl"));
-
-        let compute_pipeline_layout =
-            wgpu.device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Compute Pipeline Layout"),
-                    bind_group_layouts: &[&compute_bind_group.bind_group_layout],
-                    push_constant_ranges: &[],
-                });
-
-        let compute_pipeline =
-            wgpu.device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("Compute Pipeline"),
-                    layout: Some(&compute_pipeline_layout),
-                    module: &compute_shader,
-                    entry_point: "compute",
-                });
         let egui = EguiRenderer::new(
             &wgpu.device,       // wgpu Device
             wgpu.config.format, // TextureFormat
@@ -206,13 +151,7 @@ impl ApplicationState {
             window: window.clone(),
             gui_state,
             light_uniforms,
-            compute_pipeline,
-            compute_bind_group,
-            input_buffer,
-            output_buffer,
-            map_buffer,
         };
-        app.compute();
         app
     }
 
@@ -315,61 +254,6 @@ impl ApplicationState {
         self.wgpu.queue.submit([command]);
 
         output.present();
-    }
-
-    pub fn compute(&mut self) {
-        let mut encoder = self
-            .wgpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        {
-            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("ComputeP Pass"),
-                timestamp_writes: None,
-            });
-            compute_pass.set_pipeline(&self.compute_pipeline);
-            compute_pass.set_bind_group(0, &self.compute_bind_group.bind_group, &[]);
-
-            let invocation_count = 64;
-            let workgroup_size = 32;
-            // This ceils invocation_count / workgroup_size
-            let workgroup_count = (invocation_count + workgroup_size - 1) / workgroup_size;
-            compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
-        }
-
-        // Copy the memory from the output buffer that lies in the storage part of the
-        // memory to the map buffer, which is in the "mappable" part of the memory.
-        encoder.copy_buffer_to_buffer(
-            &self.output_buffer.buffer,
-            0,
-            &self.map_buffer.buffer,
-            0,
-            self.output_buffer.buffer.size(),
-        );
-        let command = encoder.finish();
-
-        self.wgpu.queue.submit([command]);
-
-        let (sender, receiver) = futures_channel::oneshot::channel();
-        self.map_buffer
-            .buffer
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, |result| {
-                let _ = sender.send(result);
-            });
-        self.wgpu.device.poll(wgpu::Maintain::Wait);
-        receiver
-            .block_on()
-            .expect("communication failed")
-            .expect("buffer reading failed");
-        let slice: &[u8] = &self.map_buffer.buffer.slice(..).get_mapped_range();
-
-        let slice = slice
-            .chunks_exact(4)
-            .map(|mut b: &[u8]| b.read_f32::<LittleEndian>().unwrap());
-        for (i, x) in slice.into_iter().enumerate() {
-            info!("{} became {x}", self.input_buffer.data[i]);
-        }
     }
 
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
