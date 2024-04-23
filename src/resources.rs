@@ -42,57 +42,14 @@ pub fn load_texture(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    };
-    let view_label = label.map(|s| format!("{s} Texture View"));
-    let texture = device.create_texture(&texture_descriptor);
-    write_mipmaps(queue, &texture, image);
-    let view = texture.create_view(&wgpu::TextureViewDescriptor {
-        label: view_label.as_deref(),
-        format: Some(texture.format()),
-        dimension: Some(wgpu::TextureViewDimension::D2),
-        aspect: wgpu::TextureAspect::All,
-        base_mip_level: 0,
-        mip_level_count: Some(1),
-        base_array_layer: 0,
-        array_layer_count: Some(1),
-    });
-    Ok((texture, view))
-}
-
-#[allow(clippy::too_many_lines)]
-pub fn load_texture_compute(
-    path: impl AsRef<Path>,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> image::ImageResult<(wgpu::Texture, wgpu::TextureView)> {
-    let image = image::open(&path)?;
-    let label = path.as_ref().to_str();
-    let texture_label = label.map(|s| format!("{s} Texture"));
-    let texture_size = wgpu::Extent3d {
-        width: image.width(),
-        height: image.height(),
-        depth_or_array_layers: 1,
-    };
-    let mip_level_count = get_max_mip_level_count(texture_size);
-
-    let texture_descriptor = wgpu::TextureDescriptor {
-        label: texture_label.as_deref(),
-        size: texture_size,
-        mip_level_count,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::STORAGE_BINDING
             | wgpu::TextureUsages::COPY_DST
             | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     };
-
-    // Write mip level 0
     let texture = device.create_texture(&texture_descriptor);
+    // Write texture mip level 0
     let destination = wgpu::ImageCopyTextureBase {
         texture: &texture,
         mip_level: 0,
@@ -107,133 +64,11 @@ pub fn load_texture_compute(
     let data = image.into_rgba8().into_raw();
     queue.write_texture(destination, &data, source, texture.size());
 
-    // Create mip views and sizes
-    let mut mip_sizes = vec![texture_size];
-    let mut mip_views = vec![];
-    for level in 0..mip_level_count {
-        mip_views.push(texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some(&format!("mip view: {level}")),
-            format: Some(texture.format()),
-            dimension: Some(wgpu::TextureViewDimension::D2),
-            aspect: wgpu::TextureAspect::All,
-            base_mip_level: level,
-            mip_level_count: Some(1),
-            base_array_layer: 0,
-            array_layer_count: Some(1),
-        }));
-        if level > 0 {
-            let previous_size = mip_sizes[level as usize - 1];
-            mip_sizes.push(wgpu::Extent3d {
-                width: previous_size.width / 2,
-                height: previous_size.height / 2,
-                depth_or_array_layers: previous_size.depth_or_array_layers / 2,
-            });
-        }
-    }
+    let mip_level_count = get_max_mip_level_count(texture.size());
 
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: None,
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::WriteOnly,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                },
-                count: None,
-            },
-        ],
-    });
-
-    // Create bind groups in advance because of rust borrow rules
-    let mut bind_groups = vec![];
-    for level in 1..mip_level_count {
-        bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&mip_views[level as usize - 1]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&mip_views[level as usize]),
-                },
-            ],
-        }));
-    }
-
-    let compute_shader = device.create_shader_module(wgpu::include_wgsl!("compute.wgsl"));
-
-    let compute_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Compute Pipeline Layout"),
-        bind_group_layouts: &[&bind_group_layout],
-        push_constant_ranges: &[],
-    });
-
-    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("Compute Pipeline"),
-        layout: Some(&compute_pipeline_layout),
-        module: &compute_shader,
-        entry_point: "compute_mip_map",
-    });
-
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-
-    let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-        label: Some("Compute Pass"),
-        timestamp_writes: None,
-    });
-    compute_pass.set_pipeline(&compute_pipeline);
-
-    for level in 1..mip_level_count {
-        // We write to each mip level using the previous level
-        compute_pass.set_bind_group(0, &bind_groups[level as usize - 1], &[]);
-        let invocation_count_x = texture.width();
-        let invocation_count_y = texture.height();
-        let workgroup_size_per_dim = 8;
-        // This ceils invocation_count / workgroup_size
-        let workgroup_count_x =
-            (invocation_count_x + workgroup_size_per_dim - 1) / workgroup_size_per_dim;
-        let workgroup_count_y =
-            (invocation_count_y + workgroup_size_per_dim - 1) / workgroup_size_per_dim;
-        compute_pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);
-    }
-
-    drop(compute_pass);
-
-    let command = encoder.finish();
-
-    queue.submit([command]);
-
-    // for level in 1..mip_level_count {
-    //     save_texture(
-    //         format!(
-    //             "{}_mip{level}.png",
-    //             path.as_ref().with_extension("").display()
-    //         ),
-    //         &texture,
-    //         device,
-    //         queue,
-    //         level,
-    //     );
-    // }
-
+    let view_label = label.map(|s| format!("{s} Texture View"));
     let view = texture.create_view(&wgpu::TextureViewDescriptor {
-        label: None,
+        label: view_label.as_deref(),
         format: Some(texture.format()),
         dimension: Some(wgpu::TextureViewDimension::D2),
         aspect: wgpu::TextureAspect::All,

@@ -24,12 +24,12 @@ use winit::{
 
 use crate::{
     gui::{EguiRenderer, GuiState},
-    resources::{load_geometry, load_texture_compute, VertexAttribute},
+    resources::{load_geometry, VertexAttribute},
 };
 
 use self::{
     bind_group::BindGroup,
-    buffer::{Buffer, DataBuffer, IndexBuffer, VertexBuffer},
+    buffer::{DataBuffer, IndexBuffer, VertexBuffer},
     texture::Texture,
     wgpu_context::WgpuContext,
 };

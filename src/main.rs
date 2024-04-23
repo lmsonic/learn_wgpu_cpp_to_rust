@@ -1,5 +1,6 @@
 #![allow(clippy::cargo_common_metadata)]
 mod application;
+mod compute;
 mod gui;
 mod resources;
 
