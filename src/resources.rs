@@ -3,16 +3,15 @@ use std::{fmt::Debug, path::Path};
 use glam::{Vec2, Vec3};
 use image::flat::SampleLayout;
 use image::imageops::thumbnail;
-use image::{save_buffer, DynamicImage, FlatSamples, ImageBuffer, Rgba, RgbaImage};
+use image::{DynamicImage, FlatSamples, Rgba};
 use pollster::FutureExt;
 use tracing::{error, info};
 use wgpu::Extent3d;
 
-use crate::application::bind_group::BindGroup;
 use crate::application::buffer::Buffer;
 
-fn get_max_mip_level_count(texture_size: wgpu::Extent3d) -> u32 {
-    bit_width(u32::max(texture_size.width, texture_size.height))
+fn get_max_mip_level_count(width: u32, height: u32) -> u32 {
+    bit_width(u32::max(width, height))
 }
 
 const fn bit_width(x: u32) -> u32 {
@@ -30,7 +29,7 @@ pub fn load_texture(
     let image = image::open(&path)?;
     let label = path.as_ref().to_str();
     let texture_label = label.map(|s| format!("{s} Texture"));
-    let mip_level_count = bit_width(u32::max(image.width(), image.height()));
+    let mip_level_count = get_max_mip_level_count(image.width(), image.height());
     let texture_descriptor = wgpu::TextureDescriptor {
         label: texture_label.as_deref(),
         size: wgpu::Extent3d {
@@ -63,8 +62,6 @@ pub fn load_texture(
     };
     let data = image.into_rgba8().into_raw();
     queue.write_texture(destination, &data, source, texture.size());
-
-    let mip_level_count = get_max_mip_level_count(texture.size());
 
     let view_label = label.map(|s| format!("{s} Texture View"));
     let view = texture.create_view(&wgpu::TextureViewDescriptor {
@@ -263,8 +260,6 @@ fn compute_tangent_frame(face: [VertexAttribute; 3], expected_normal: Vec3) -> (
 
     if normal.dot(expected_normal) < 0.0 {
         tangent = -tangent;
-        bitangent = -bitangent;
-        normal = -normal;
     }
 
     normal = expected_normal;

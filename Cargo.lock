@@ -2653,7 +2653,6 @@ name = "wgpu-cpp"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "byteorder",
  "egui",
  "egui-wgpu",
  "egui-winit",

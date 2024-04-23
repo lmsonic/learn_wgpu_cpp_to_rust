@@ -1,6 +1,5 @@
 use std::{fmt::Debug, mem};
 
-use tracing::warn;
 use wgpu::util::DeviceExt;
 
 pub struct VertexBuffer<A> {

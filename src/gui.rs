@@ -1,3 +1,5 @@
+#![allow(clippy::shadow_unrelated)]
+
 use std::f32::consts::PI;
 use std::time::Duration;
 

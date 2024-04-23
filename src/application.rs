@@ -379,6 +379,7 @@ impl Application {
                 if consumed {
                     return;
                 }
+                #[allow(clippy::collapsible_match)]
                 match window_event {
                     WindowEvent::Resized(new_size) => self.state.resize(new_size),
                     WindowEvent::CloseRequested => elwt.exit(),
