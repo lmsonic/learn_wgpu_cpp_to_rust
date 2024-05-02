@@ -12,8 +12,9 @@ use std::{
 };
 
 use egui_wgpu::ScreenDescriptor;
-use glam::{Mat4, Quat, Vec3, Vec4};
+use glam::{Mat3, Mat4, Quat, Vec3, Vec4};
 
+use tracing::info;
 use winit::{
     dpi::{PhysicalPosition, PhysicalSize},
     event::{ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
@@ -23,6 +24,7 @@ use winit::{
 };
 
 use crate::{
+    compute,
     gui::{EguiRenderer, GuiState},
     resources::{load_geometry, VertexAttribute},
 };
@@ -53,6 +55,10 @@ pub struct ApplicationState {
     window: Arc<Window>,
     gui_state: GuiState,
     light_uniforms: DataBuffer<LightUniforms>,
+
+    input_texture: Texture,
+    compute_uniforms: DataBuffer<ComputeUniforms>,
+    should_compute: bool,
 }
 
 impl ApplicationState {
@@ -121,7 +127,18 @@ impl ApplicationState {
             1,                  // samples
             window,             // winit Window
         );
-
+        let compute_uniforms = DataBuffer::uniform(
+            ComputeUniforms {
+                kernel: Mat3::from_cols_array_2d(&[
+                    [-1.0, -2.0, -1.0],
+                    [0.0, 0.0, 0.0],
+                    [1.0, 2.0, 1.0],
+                ]),
+                test: 0.5,
+                ..Default::default()
+            },
+            &wgpu.device,
+        );
         let gui_state = GuiState {
             clear_color: [0.05, 0.05, 0.05],
             light_color1: light_uniforms.data.colors[0].truncate().to_array(),
@@ -133,7 +150,10 @@ impl ApplicationState {
             specular: light_uniforms.data.specular,
             normal_strength: uniform_buffer.data.normal_map_strength,
             mip_level: uniform_buffer.data.mip_level,
+            kernel: compute_uniforms.data.kernel,
+            compute_test: compute_uniforms.data.test,
         };
+        let input_texture = Texture::new("resources/butterfly.jpg", &wgpu);
 
         Self {
             wgpu,
@@ -154,6 +174,9 @@ impl ApplicationState {
             window: window.clone(),
             gui_state,
             light_uniforms,
+            input_texture,
+            compute_uniforms,
+            should_compute: true,
         }
     }
 
@@ -166,8 +189,10 @@ impl ApplicationState {
         self.uniforms.data.camera_world_position = self.camera.get_translation();
 
         self.uniforms.update(&self.wgpu.queue);
-
         self.light_uniforms.update(&self.wgpu.queue);
+        self.compute_uniforms.update(&self.wgpu.queue);
+
+        self.compute();
         self.render();
 
         let end_frame_time = time::Instant::now();
@@ -225,7 +250,8 @@ impl ApplicationState {
             size_in_pixels: [self.wgpu.config.width, self.wgpu.config.height],
             pixels_per_point: self.window.scale_factor() as f32,
         };
-
+        let old_compute_test = self.gui_state.compute_test;
+        let old_kernel = self.gui_state.kernel;
         self.egui.draw(
             &self.wgpu.device,
             &self.wgpu.queue,
@@ -251,12 +277,32 @@ impl ApplicationState {
         };
         self.uniforms.data.normal_map_strength = self.gui_state.normal_strength;
         self.uniforms.data.mip_level = self.gui_state.mip_level;
+        self.compute_uniforms.data.kernel = self.gui_state.kernel;
+        self.compute_uniforms.data.test = self.gui_state.compute_test;
 
+        if f32::abs(old_compute_test - self.compute_uniforms.data.test) > f32::EPSILON {
+            self.should_compute = true;
+        }
+        if old_kernel != self.compute_uniforms.data.kernel {
+            self.should_compute = true;
+        }
         let command = encoder.finish();
 
         self.wgpu.queue.submit([command]);
 
         output.present();
+    }
+
+    pub fn compute(&mut self) {
+        if self.should_compute {
+            compute::compute_filter(
+                &self.input_texture,
+                &self.compute_uniforms,
+                &self.wgpu.device,
+                &self.wgpu.queue,
+            );
+            self.should_compute = false;
+        }
     }
 
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -328,6 +374,14 @@ struct LightUniforms {
     diffuse: f32,
     specular: f32,
     _padding: f32,
+}
+
+#[derive(Debug, Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct ComputeUniforms {
+    kernel: Mat3,
+    test: f32,
+    _pad: [f32; 6],
 }
 
 #[derive(Clone, Copy, Default)]

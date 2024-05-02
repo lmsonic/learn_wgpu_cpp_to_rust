@@ -12,14 +12,17 @@ egui-wgpu = "0.27.2"
 egui-winit = "0.27.2"
 futures-channel = "0.3.30"
 glam = { version = "0.27.0", features = ["bytemuck"] }
-image = "0.25.1"
+image = { version = "0.24", features = [
+    "jpeg",
+    "png",
+] } # Add the types you want support for
 pollster = "0.3.0"
 tobj = "4.0.1"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 wgpu = "0.19.3"
 winit = "0.29.15"
-
+egui_extras = { version = "0.27.2", features = ["all_loaders"] }
 
 [lints.rust]
 unsafe_code = "deny"

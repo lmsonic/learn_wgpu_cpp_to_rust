@@ -4,13 +4,13 @@ use std::f32::consts::PI;
 use std::time::Duration;
 
 use egui::epaint::Shadow;
-use egui::{Context, Ui, Visuals};
+use egui::{Context, Ui, Vec2, Visuals};
 use egui_wgpu::Renderer;
 use egui_wgpu::ScreenDescriptor;
 
 use egui_winit::State;
 
-use glam::{Vec2, Vec3, Vec4};
+use glam::{Mat3, Vec3, Vec4};
 use wgpu::{CommandEncoder, Device, Queue, TextureFormat, TextureView};
 use winit::event::WindowEvent;
 use winit::window::Window;
@@ -27,11 +27,27 @@ pub struct GuiState {
     pub specular: f32,
     pub normal_strength: f32,
     pub mip_level: f32,
+    pub kernel: Mat3,
+    pub compute_test: f32,
 }
 
 impl GuiState {
     #[allow(clippy::shadow_unrelated)]
     pub fn gui(&mut self, ui: &Context, delta_time: Duration) {
+        egui_extras::install_image_loaders(ui);
+        egui::Window::new("Image")
+            .resizable(true)
+            .vscroll(true)
+            .default_open(true)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.set_max_size(Vec2::new(500.0, 250.0));
+                    ui.set_max_size(Vec2::new(1000.0, 500.0));
+                    ui.image(egui::include_image!("../resources/butterfly.jpg"));
+                    ui.image(egui::include_image!("../resources/sobel.png"));
+                });
+                ui.add(egui::Slider::new(&mut self.compute_test, 0.0..=1.0));
+            });
         egui::Window::new("Lighting")
             .resizable(true)
             .vscroll(true)

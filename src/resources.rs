@@ -77,7 +77,7 @@ pub fn load_texture(
     Ok((texture, view))
 }
 
-fn save_texture(
+pub fn save_texture(
     path: impl AsRef<Path>,
     texture: &wgpu::Texture,
     device: &wgpu::Device,
@@ -138,14 +138,7 @@ fn save_texture(
         .expect("buffer reading failed");
     let pixels: &[u8] = &pixel_buffer.buffer.slice(..).get_mapped_range();
 
-    let layout = SampleLayout {
-        channels: 4,
-        channel_stride: 1,
-        height,
-        height_stride: channels as usize,
-        width,
-        width_stride: padded_bytes_per_row as usize,
-    };
+    let layout = SampleLayout::row_major_packed(4, width, height);
     let buffer = FlatSamples {
         samples: pixels,
         layout,
